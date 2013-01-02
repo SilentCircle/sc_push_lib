@@ -1,0 +1,7 @@
+*.sw?
+doc/*.html
+doc/edoc-info
+test/*.beam
+logs/
+deps/
+ebin/
