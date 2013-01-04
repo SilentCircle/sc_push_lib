@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @author Edwin Fine
-%%% @copyright (C) 2012, Fine Computer Consultants, Inc.
+%%% @copyright (C) 2012,2013 Silent Circle LLC
 %%% @doc
 %%% Configuration server for sc_push.
 %%% @end
