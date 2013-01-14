@@ -3,6 +3,7 @@
 -export([
         init/0,
         register_id/1,
+        reregister_id/2,
         register_ids/1,
         deregister_id/1,
         deregister_ids/1,
@@ -53,6 +54,10 @@ init() ->
 -spec register_id(sc_types:reg_proplist()) -> sc_types:reg_result().
 register_id([{_, _}|_] = Props) ->
     register_ids([Props]).
+
+-spec reregister_id({atom(), binary()}, binary()) -> ok.
+reregister_id({_, _} = OldId, <<NewToken/binary>>) ->
+    reregister_id_impl(OldId, NewToken).
 
 %% Returns list of results in same order as requests.
 %% Results = [Result]
@@ -173,6 +178,10 @@ save_push_regs(PushRegs) ->
 delete_push_regs(IDs) ->
     dirty_txn(delete_push_regs_txn(), [IDs]).
 
+-spec reregister_id_impl({atom(), binary()}, binary()) -> ok.
+reregister_id_impl(OldId, NewToken) ->
+    do_txn(reregister_id_txn(), [OldId, NewToken]).
+
 -spec save_push_regs_txn() -> fun((push_reg_list()) -> ok).
 save_push_regs_txn() ->
     fun(PushRegs) ->
@@ -185,6 +194,18 @@ delete_push_regs_txn() ->
     fun(IDs) ->
             [mnesia:delete({sc_pshrg, ID}) || ID <- IDs],
             ok
+    end.
+
+-spec reregister_id_txn() -> fun(({atom(), binary()}, binary()) -> ok).
+reregister_id_txn() ->
+    fun(OldId, NewToken) ->
+            case mnesia:read(sc_pshrg, OldId) of
+                [#sc_pshrg{id = {Svc, _Tok} = Key} = R] ->
+                    ok = mnesia:delete({sc_pshrg, Key}), 
+                    ok = mnesia:write(R#sc_pshrg{id = make_id(Svc, NewToken)});
+                [] -> % Does not exist, so that's fine
+                    ok
+            end
     end.
 
 -spec do_txn(fun(), list()) -> Result::term().

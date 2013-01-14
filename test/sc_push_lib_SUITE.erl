@@ -198,6 +198,7 @@ groups() ->
                 make_id_test,
                 make_push_props_test,
                 register_id_test,
+                reregister_id_test,
                 register_ids_test,
                 register_ids_bad_id_test,
                 deregister_ids_bad_id_test,
@@ -289,6 +290,36 @@ register_id_test(Config) ->
     ok = sc_push_reg_api:register_id(RegPL),
     ct:pal("Registered ~p~n", [RegPL]),
     deregister_id(RegPL).
+
+reregister_id_test(doc) ->
+    ["sc_push_reg_api:reregister_id/2 should reregister an existing reg with a new ID"];
+reregister_id_test(suite) ->
+    [];
+reregister_id_test(Config) ->
+    RegPL = value(registration, Config),
+    ok = sc_push_reg_api:register_id(RegPL),
+    ct:pal("Registered ~p~n", [RegPL]),
+
+    OldService = value(service, RegPL),
+    OldTok = value(token, RegPL),
+    OldId = sc_push_reg_api:make_id(OldService, OldTok),
+    NewTok = <<"thisisanewtoken">>,
+    ok = sc_push_reg_api:reregister_id(OldId, NewTok),
+
+    Tag = value(tag, RegPL),
+    ListOfRegPL = sc_push_reg_api:get_registration_info(Tag),
+    [[{_,_}|_] = NewRegPL] = ListOfRegPL,
+
+    % Does this have the tag?
+    NewTag = value(tag, NewRegPL),
+    % Does this have the *right* tag?
+    NewTag = sc_util:to_bin(Tag),
+    % Does this have the right service and token?
+    OldService = value(service, NewRegPL),
+    NewTok = value(token, NewRegPL),
+
+    deregister_id(RegPL),
+    deregister_id(NewRegPL).
 
 register_ids_test(doc) ->
     ["sc_push_reg_api:register_ids/1 should register a 'device'"];
