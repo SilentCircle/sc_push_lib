@@ -1,19 +1,20 @@
 -module(sc_push_reg_api).
 
 -export([
-        init/0,
-        register_id/1,
-        reregister_id/2,
-        register_ids/1,
-        deregister_id/1,
-        deregister_ids/1,
-        all_registration_info/0,
-        get_registration_info/1,
-        get_registration_info_by_id/1,
-        get_registration_info_by_tag/1,
-        make_sc_push_props/5,
-        make_id/2
-     ]).
+    init/0,
+    register_id/1,
+    reregister_id/2,
+    register_ids/1,
+    deregister_id/1,
+    deregister_ids/1,
+    all_registration_info/0,
+    get_registration_info/1,
+    get_registration_info_by_id/1,
+    get_registration_info_by_tag/1,
+    make_sc_push_props/5,
+    make_id/2,
+    is_valid_push_reg/1
+    ]).
 
 -export_type([
         reg_id_key/0
@@ -114,7 +115,7 @@ deregister_ids(IDs) when is_list(IDs) ->
     end.
 
 %% @doc Get the registration information for a tag.
--spec get_registration_info(bin_or_str()) -> [sc_types:reg_proplist()].
+-spec get_registration_info(bin_or_str()) -> [sc_types:reg_proplist()] | notfound.
 get_registration_info(Tag) ->
     get_registration_info_by_tag(sc_util:to_bin(Tag)).
 
@@ -187,6 +188,12 @@ make_sc_pshrg(Service, Token, Tag, AppId, Dist) when is_atom(Service) ->
         app_id = sc_util:to_bin(AppId),
         dist = sc_util:to_bin(Dist)
     }.
+
+is_valid_push_reg(PL) ->
+    try make_sc_pshrg(PL) of
+        _ -> true
+    catch _:_ -> false
+    end.
 
 sc_pshrg_to_props(#sc_pshrg{id = ID, tag = Tag, app_id = AppId, dist = Dist}) ->
     {Service, Token} = split_id(ID),

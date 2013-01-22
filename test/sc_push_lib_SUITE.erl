@@ -19,6 +19,7 @@
 -export([
     make_id_test/1,
     make_push_props_test/1,
+    is_valid_push_reg_test/1,
     register_id_test/1,
     reregister_id_test/1,
     register_ids_test/1,
@@ -222,6 +223,7 @@ groups() ->
             [
                 make_id_test,
                 make_push_props_test,
+                is_valid_push_reg_test,
                 register_id_test,
                 reregister_id_test,
                 register_ids_test,
@@ -295,6 +297,27 @@ make_id_test(_Config) ->
     ExpectedID = sc_push_reg_api:make_id(atom_to_list(ExpSvc), ExpToken),
     ExpectedID = sc_push_reg_api:make_id(atom_to_list(ExpSvc), binary_to_list(ExpToken)),
     ok.
+
+is_valid_push_reg_test(doc) ->
+    ["sc_push_reg_api:is_valid_push_reg/1 should validate proplist"];
+is_valid_push_reg_test(suite) ->
+    [];
+is_valid_push_reg_test(Config) ->
+    Service = my_service,
+    Token = <<"my_token">>,
+    Tag = <<"my_tag">>,
+    AppId = <<"my_app_id">>,
+    Dist = <<"prod">>,
+
+    GoodProps = sc_push_reg_api:make_sc_push_props(Service, Token, Tag,
+                                                   AppId, Dist),
+
+    true = sc_push_reg_api:is_valid_push_reg(GoodProps),
+
+    BadProps = [{service, 100}],
+    false = sc_push_reg_api:is_valid_push_reg(BadProps),
+
+    Config.
 
 make_push_props_test(doc) ->
     ["Test sc_push_reg_api:make_sc_push_props/5"];
