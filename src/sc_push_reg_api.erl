@@ -7,14 +7,32 @@
         register_ids/1,
         deregister_id/1,
         deregister_ids/1,
+        all_registration_info/0,
         get_registration_info/1,
+        get_registration_info_by_id/1,
+        get_registration_info_by_tag/1,
         make_sc_push_props/5,
         make_id/2
      ]).
 
+-export_type([
+        reg_id_key/0
+        ]).
+
 -include("sc_push_lib.hrl").
+-include_lib("stdlib/include/ms_transform.hrl").
 
 -define(NS_SC_PUSH, "http://silentcircle.com/protocol/push").
+
+%%--------------------------------------------------------------------
+%% Types
+%%--------------------------------------------------------------------
+-opaque reg_id_key() :: {atom(), binary()}.
+-type atom_or_str() :: atom() | string().
+-type bin_or_str() :: binary() | string().
+-type atomable() :: atom() | string() | binary().
+-type binable() :: atom() | binary() | integer() | iolist().
+-type reg_id_keys() :: [reg_id_key()].
 
 %%--------------------------------------------------------------------
 %% Records
@@ -31,38 +49,46 @@
 % token as sent to the push service.
 %
 -record(sc_pshrg, {
-        id = {undefined, <<>>} :: tuple(), % {service, token (APNS token, Android reg ID)}
+        id = {undefined, <<>>} :: reg_id_key(), % {service, token (APNS token, Android reg ID)}
         tag = <<>> :: binary(), % User identification tag, e.g. <<"user@server">>
         app_id = <<>> :: binary(), % iOS AppBundleID, Android package
         dist = <<>> :: binary(), % distribution <<>> is same as <<"prod">>, or <<"dev">>
         last_updated = now()
     }).
 
-%%--------------------------------------------------------------------
-%% Types
-%%--------------------------------------------------------------------
 -type push_reg_list() :: list(#sc_pshrg{}).
-
 
 %%====================================================================
 %% API
 %%====================================================================
+%% @doc Initialize API.
+-spec init() -> ok.
 init() ->
     create_tables([node()]),
     ok.
 
+%% @doc Get registration info of all registered IDs. Note
+%% that in future, this may be limited to the first 100
+%% IDs found. It may also be supplemented by an API that
+%% supports getting the information in batches.
+-spec all_registration_info() -> [sc_types:reg_proplist()].
+all_registration_info() ->
+    [sc_pshrg_to_props(R) || R <- all_reg()].
+
+%% @doc Register an identity for receiving push notifications
+%% from a supported push service.
 -spec register_id(sc_types:reg_proplist()) -> sc_types:reg_result().
 register_id([{_, _}|_] = Props) ->
     register_ids([Props]).
 
--spec reregister_id({atom(), binary()}, binary()) -> ok.
-reregister_id({_, _} = OldId, <<NewToken/binary>>) ->
+%% @doc Reregister a previously-registered identity, substituting a new token
+%% for the specified push service.
+-spec reregister_id(reg_id_key(), binary()) -> ok.
+reregister_id(OldId, <<NewToken/binary>>) ->
     reregister_id_impl(OldId, NewToken).
 
-%% Returns list of results in same order as requests.
-%% Results = [Result]
-%% Result = ok | {error, Reason}
--spec register_ids([sc_types:reg_proplist(), ...]) -> [sc_types:reg_result(), ...].
+%% @doc Register a list of identities that should receive push notifications.
+-spec register_ids([sc_types:reg_proplist(), ...]) -> ok | {error, term()}.
 register_ids([[{_, _}|_]|_] = ListOfProplists) ->
     try
         save_push_regs([make_sc_pshrg(PL) || PL <- ListOfProplists])
@@ -71,13 +97,13 @@ register_ids([[{_, _}|_]|_] = ListOfProplists) ->
             {error, Reason}
     end.
 
--spec deregister_id(sc_types:dereg_id()) -> sc_types:reg_result().
-deregister_id({_, _} = ID) ->
+%% @doc Deregister an identity using a key returned by make_id/2.
+-spec deregister_id(reg_id_key()) -> ok | {error, term()}.
+deregister_id(ID) ->
     deregister_ids([ID]).
 
-%% Result = ok | {error, Reason}
--spec deregister_ids([sc_types:reg_proplist(), ...]) ->
-      ok | {error, term()}.
+%% @doc Deregister a list of identities.
+-spec deregister_ids(reg_id_keys()) -> ok | {error, term()}.
 deregister_ids(IDs) when is_list(IDs) ->
     try
         CheckedIDs = check_ids(IDs),
@@ -87,22 +113,58 @@ deregister_ids(IDs) when is_list(IDs) ->
             {error, Reason}
     end.
 
+%% @doc Get the registration information for a tag.
+-spec get_registration_info(bin_or_str()) -> [sc_types:reg_proplist()].
 get_registration_info(Tag) ->
-    case lookup_reg(sc_util:to_bin(Tag)) of
+    get_registration_info_by_tag(sc_util:to_bin(Tag)).
+
+%% @doc Get the registration information using a key returned by make_id/2.
+-spec get_registration_info_by_id(reg_id_key()) ->
+    sc_types:reg_proplist() | notfound.
+get_registration_info_by_id(ID) ->
+    case lookup_reg_id(ID) of
+        [#sc_pshrg{} = Reg] ->
+            sc_pshrg_to_props(Reg);
+        [] ->
+            notfound
+    end.
+
+-spec get_registration_info_by_tag(binary()) ->
+    sc_types:reg_proplist() | notfound.
+get_registration_info_by_tag(Tag) ->
+    case lookup_reg_tag(Tag) of
         [#sc_pshrg{}|_] = Regs ->
             [sc_pshrg_to_props(Reg) || Reg <- Regs];
         [] ->
             notfound
     end.
 
+%% @doc Create a registration proplist required by other functions
+%% in this API.
+-spec make_sc_push_props(atomable(), binable(), binable(),
+                         binable(), binable())
+    -> [{'app_id', binary()} |
+        {'dist', binary()} |
+        {'service', atom()} |
+        {'tag', binary()} |
+        {'token', binary()}].
+
 make_sc_push_props(Service, Token, Tag, AppId, Dist) ->
     [
-        {service, Service},
-        {token, Token},
-        {tag, Tag},
-        {app_id, AppId},
-        {dist, Dist}
+        {service, sc_util:to_atom(Service)},
+        {token, sc_util:to_bin(Token)},
+        {tag, sc_util:to_bin(Tag)},
+        {app_id, sc_util:to_bin(AppId)},
+        {dist, sc_util:to_bin(Dist)}
     ].
+
+%% @doc Create an opaque registration ID key for use with other functions
+%% in this API.
+-spec make_id(atom_or_str(), binable()) -> reg_id_key().
+make_id(Service, Token) when is_atom(Service) ->
+    {Service, sc_util:to_bin(Token)};
+make_id(Service, Token) when is_list(Service) ->
+    make_id(list_to_atom(Service), Token).
 
 %%====================================================================
 %% Internal functions
@@ -130,20 +192,20 @@ sc_pshrg_to_props(#sc_pshrg{id = ID, tag = Tag, app_id = AppId, dist = Dist}) ->
     {Service, Token} = split_id(ID),
     make_sc_push_props(Service, Token, Tag, AppId, Dist).
 
-%% Yes, it's an identity function. Maybe it won't be one day.
-split_id({_Service, _Token} = Id) ->
-    Id.
+-spec split_id(reg_id_key()) -> {atom(), binary()}.
+split_id(ID) ->
+    ID.
 
-make_id(Service, Token) when is_atom(Service) ->
-    {Service, sc_util:to_bin(Token)};
-make_id(Service, Token) when is_list(Service) ->
-    make_id(list_to_atom(Service), Token).
+-spec check_id(reg_id_key()) -> reg_id_key().
+check_id(ID) ->
+    case split_id(ID) of
+       {S, T} when is_atom(S), is_binary(T) ->
+           ID;
+       _ ->
+           throw({bad_reg_id, ID})
+    end.
 
-check_id({Service, Token}) when is_atom(Service), is_binary(Token) ->
-    make_id(Service, Token);
-check_id(Other) ->
-    throw({bad_reg_id, Other}).
-
+-spec check_ids(reg_id_keys()) -> reg_id_keys().
 check_ids(IDs) when is_list(IDs) ->
     [check_id(ID) || ID <- IDs].
 
@@ -165,20 +227,27 @@ create_tables(Nodes) ->
             throw({create_table_error, Res})
     end.
 
--spec lookup_reg(binary()) -> push_reg_list().
-lookup_reg(Tag) ->
+-spec all_reg() -> push_reg_list().
+all_reg() ->
+    mnesia:dirty_select(sc_pshrg, ets:fun2ms(fun(R) -> R end)).
+
+-spec lookup_reg_id(reg_id_key()) -> push_reg_list().
+lookup_reg_id(ID) ->
+    mnesia:dirty_read(sc_pshrg, ID).
+
+-spec lookup_reg_tag(binary()) -> push_reg_list().
+lookup_reg_tag(Tag) when is_binary(Tag) ->
     mnesia:dirty_index_read(sc_pshrg, Tag, #sc_pshrg.tag).
 
 -spec save_push_regs(push_reg_list()) -> ok | {error, term()}.
 save_push_regs(PushRegs) ->
     do_txn(save_push_regs_txn(), [PushRegs]).
 
--spec delete_push_regs(list({Service::atom(), Token::binary()})) ->
-    ok | {error, term()}.
+-spec delete_push_regs(reg_id_keys()) -> ok | {error, term()}.
 delete_push_regs(IDs) ->
     dirty_txn(delete_push_regs_txn(), [IDs]).
 
--spec reregister_id_impl({atom(), binary()}, binary()) -> ok.
+-spec reregister_id_impl(reg_id_key(), binary()) -> ok.
 reregister_id_impl(OldId, NewToken) ->
     do_txn(reregister_id_txn(), [OldId, NewToken]).
 
@@ -196,7 +265,7 @@ delete_push_regs_txn() ->
             ok
     end.
 
--spec reregister_id_txn() -> fun(({atom(), binary()}, binary()) -> ok).
+-spec reregister_id_txn() -> fun((reg_id_key(), binary()) -> ok).
 reregister_id_txn() ->
     fun(OldId, NewToken) ->
             case mnesia:read(sc_pshrg, OldId) of

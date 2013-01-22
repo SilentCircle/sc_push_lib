@@ -73,7 +73,7 @@
 %%          Currently unused.</dd>
 %% </dl>
 %%--------------------------------------------------------------------
--type req_prop() :: sc_util:prop(atom(), term()).
+-type req_prop() :: sc_types:prop(atom(), term()).
 -type req_props() :: [req_prop()].
 
 %%--------------------------------------------------------------------

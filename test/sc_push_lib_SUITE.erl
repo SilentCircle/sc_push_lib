@@ -6,7 +6,32 @@
 
 -include_lib("common_test/include/ct.hrl").
 
--compile(export_all).
+-export([all/0,
+         suite/0,
+         groups/0,
+         init_per_suite/1,
+         end_per_suite/1,
+         init_per_group/2,
+         end_per_group/2,
+         init_per_testcase/2,
+         end_per_testcase/2]).
+
+-export([
+    make_id_test/1,
+    make_push_props_test/1,
+    register_id_test/1,
+    reregister_id_test/1,
+    register_ids_test/1,
+    register_ids_bad_id_test/1,
+    deregister_ids_bad_id_test/1,
+    all_registration_info_test/1,
+    get_registration_info_test/1,
+    get_registration_info_by_id_test/1,
+    get_registration_info_not_found_test/1,
+    get_registration_info_by_id_not_found_test/1,
+    reqmgr_test/1,
+    sc_config_test/1
+    ]).
 
 -define(assertMsg(Cond, Fmt, Args),
     case (Cond) of
@@ -203,6 +228,9 @@ groups() ->
                 register_ids_bad_id_test,
                 deregister_ids_bad_id_test,
                 get_registration_info_test,
+                all_registration_info_test,
+                get_registration_info_by_id_test,
+                get_registration_info_by_id_not_found_test,
                 get_registration_info_not_found_test
             ]
         },
@@ -273,12 +301,32 @@ make_push_props_test(doc) ->
 make_push_props_test(suite) ->
     [];
 make_push_props_test(Config) ->
-    Props = sc_push_reg_api:make_sc_push_props(p1, p2, p3, p4, p5),
-    p1 = value(service, Props),
-    p2 = value(token, Props),
-    p3 = value(tag, Props),
-    p4 = value(app_id, Props),
-    p5 = value(dist, Props),
+    Service = my_service,
+    Token = <<"my_token">>,
+    Tag = <<"my_tag">>,
+    AppId = <<"my_app_id">>,
+    Dist = <<"prod">>,
+
+    Props = sc_push_reg_api:make_sc_push_props(Service, Token, Tag,
+                                               AppId, Dist),
+    Service = value(service, Props),
+    Token = value(token, Props),
+    Tag = value(tag, Props),
+    AppId = value(app_id, Props),
+    Dist = value(dist, Props),
+
+    %% Check that it will work from strings, too
+    Props1 = sc_push_reg_api:make_sc_push_props(atom_to_list(Service),
+                                                binary_to_list(Token),
+                                                binary_to_list(Tag),
+                                                binary_to_list(AppId),
+                                                binary_to_list(Dist)),
+    Service = value(service, Props1),
+    Token = value(token, Props1),
+    Tag = value(tag, Props1),
+    AppId = value(app_id, Props1),
+    Dist = value(dist, Props1),
+
     Config.
 
 register_id_test(doc) ->
@@ -329,7 +377,7 @@ register_ids_test(Config) ->
     RegPL = value(registration, Config),
     ok = sc_push_reg_api:register_ids([RegPL]),
     ct:pal("Registered ~p~n", [RegPL]),
-    deregister_ids(RegPL),
+    deregister_ids([RegPL]),
     ok.
 
 register_ids_bad_id_test(doc) ->
@@ -357,6 +405,18 @@ deregister_ids_bad_id_test(Config) ->
     ct:pal("deregister_ids correctly identified bad input~n", []),
     Config.
 
+all_registration_info_test(doc) ->
+    ["sc_push_reg_api:all_registration_info/1 should get all reg info"];
+all_registration_info_test(suite) ->
+    [];
+all_registration_info_test(Config) ->
+    RegPLs = make_n_reg_ids(20),
+    ok = sc_push_reg_api:register_ids(RegPLs),
+    NewRegPLs = sc_push_reg_api:all_registration_info(),
+    true = reg_pls_equal(RegPLs, NewRegPLs),
+    deregister_ids(RegPLs),
+    Config.
+
 get_registration_info_test(doc) ->
     ["sc_push_reg_api:get_registration_info/1 should get the correct reg info for a tag"];
 get_registration_info_test(suite) ->
@@ -377,6 +437,28 @@ get_registration_info_test(Config) ->
     ct:pal("Got reginfo for tag ~p:~n~p", [NewTag, NewRegPL]),
     deregister_id(RegPL).
 
+get_registration_info_by_id_test(doc) ->
+    ["sc_push_reg_api:get_registration_info_by_id_by_id/1 should get the correct reg info for a single reg ID"];
+get_registration_info_by_id_test(suite) ->
+    [];
+get_registration_info_by_id_test(Config) ->
+    RegPL = value(registration, Config),
+    ok = sc_push_reg_api:register_id(RegPL),
+    Service = value(service, RegPL),
+    Token = value(token, RegPL),
+    ID = sc_push_reg_api:make_id(Service, Token),
+    NewRegPL = sc_push_reg_api:get_registration_info_by_id(ID),
+    % Does this have tag?
+    NewTag = value(tag, NewRegPL),
+    % Does this have the *right* tag?
+    % Note that the reginfo always comes back as binary data
+    % except for 'service', which is an atom.
+    Tag = value(tag, RegPL),
+    NewTag = sc_util:to_bin(Tag),
+
+    ct:pal("Got reginfo for ID ~p:~n~p", [NewTag, NewRegPL]),
+    deregister_id(RegPL).
+
 get_registration_info_not_found_test(doc) ->
     ["sc_push_reg_api:get_registration_info/1 should not find this reg info"];
 get_registration_info_not_found_test(suite) ->
@@ -385,7 +467,17 @@ get_registration_info_not_found_test(Config) ->
     FakeTag = <<"$$Completely bogus tag$$">>,
     notfound = sc_push_reg_api:get_registration_info(FakeTag),
     ct:pal("Got expected 'notfound' result for tag ~p~n", [FakeTag]),
-    ok.
+    Config.
+
+get_registration_info_by_id_not_found_test(doc) ->
+    ["sc_push_reg_api:get_registration_info_by_id/1 should not find this reg info"];
+get_registration_info_by_id_not_found_test(suite) ->
+    [];
+get_registration_info_by_id_not_found_test(Config) ->
+    FakeID = sc_push_reg_api:make_id(bogus_service, <<"Bogus Token">>),
+    notfound = sc_push_reg_api:get_registration_info_by_id(FakeID),
+    ct:pal("Got expected 'notfound' result for ID ~p~n", [FakeID]),
+    Config.
 
 %%--------------------------------------------------------------------
 %% Group: reqmgr
@@ -484,18 +576,19 @@ end_per_testcase_common(Config) ->
     Config.
 
 deregister_id(RegPL) ->
-    Service = value(service, RegPL),
-    Token = value(token, RegPL),
-    ID = sc_push_reg_api:make_id(Service, Token),
+    ID = id_from_reg_props(RegPL),
     ok = sc_push_reg_api:deregister_id(ID),
     ct:pal("Deregistered ID ~p~n", [ID]).
 
-deregister_ids(RegPL) ->
+deregister_ids(RegPLs) ->
+    IDs = [id_from_reg_props(PL) || PL <- RegPLs],
+    ok = sc_push_reg_api:deregister_ids(IDs),
+    ct:pal("Deregistered IDs ~p~n", [IDs]).
+
+id_from_reg_props(RegPL) ->
     Service = value(service, RegPL),
     Token = value(token, RegPL),
-    ID = sc_push_reg_api:make_id(Service, Token),
-    ok = sc_push_reg_api:deregister_ids([ID]),
-    ct:pal("Deregistered IDs ~p~n", [ID]).
+    sc_push_reg_api:make_id(Service, Token).
 
 try_bad_gen_server_req(SvrRef) ->
     % Try a bad request
@@ -531,4 +624,42 @@ value(Key, Config) when is_list(Config) ->
     V = proplists:get_value(Key, Config),
     ?assertMsg(V =/= undefined, "Required key missing: ~p~n", [Key]),
     V.
+
+make_n_reg_ids(N) ->
+    [make_reg_id_n(Int) || Int <- lists:seq(1, N)].
+
+make_reg_id_n(N) ->
+    sc_push_reg_api:make_sc_push_props(oneof([apns, gcm]),
+                                       make_binary(<<"tok">>, N),
+                                       make_binary(<<"tag">>, N),
+                                       make_binary(<<"app_id">>, N),
+                                       oneof([<<"prod">>, <<"dev">>])).
+
+make_binary(<<BinPrefix/binary>>, N) when is_integer(N), N >= 0 ->
+    <<BinPrefix/binary, $_, (sc_util:to_bin(N))/binary>>. 
+
+oneof([_|_] = L) ->
+    lists:nth(random:uniform(length(L)), L).
+
+reg_pls_equal([], []) ->
+    true;
+reg_pls_equal(PLs1, PLs2) ->
+    sorted_reg_pls_equal(lists:sort(PLs1), lists:sort(PLs2)).
+
+sorted_reg_pls_equal([PL1|PLs1], [PL2|PLs2]) ->
+    case reg_pl_equal(PL1, PL2) of
+        true ->
+            sorted_reg_pls_equal(PLs1, PLs2);
+        false ->
+            throw({unequal_proplists, PL1, PL2})
+    end;
+sorted_reg_pls_equal([], []) ->
+    true;
+sorted_reg_pls_equal(PLs1, PLs2) ->
+    throw({unequal_list_of_proplists, PLs1, PLs2}).
+
+reg_pl_equal(PL1, PL2) ->
+    lists:all(fun(K) -> proplists:get_value(K, PL1) =:= proplists:get_value(K, PL2) end,
+              [service, token, tag, app_id, dist]).
+
 
