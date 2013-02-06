@@ -131,7 +131,7 @@ get_registration_info_by_id(ID) ->
     end.
 
 -spec get_registration_info_by_tag(binary()) ->
-    sc_types:reg_proplist() | notfound.
+    list(sc_types:reg_proplist()) | notfound.
 get_registration_info_by_tag(Tag) ->
     case lookup_reg_tag(Tag) of
         [#sc_pshrg{}|_] = Regs ->
