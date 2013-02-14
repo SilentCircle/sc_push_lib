@@ -1,6 +1,6 @@
 @author Edwin Fine <efine@silentcircle.com>
 @copyright 2013 Silent Circle, LLC.
-@version 0.1.0
+@version 1.0.0
 @title Push Notification Service Erlang Support Library
 @doc This application contains Erlang support modules for
 the Push Service.
