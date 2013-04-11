@@ -24,7 +24,7 @@ docclean:
 
 distclean: clean
 	$(REBAR) delete-deps
-	@rm -rf logs .test
+	@rm -rf deps logs .test
 	@rm -rf doc/*.html doc/edoc-info html/
 
 docs:
