@@ -9,6 +9,8 @@
 %% Supervisor callbacks
 -export([init/1]).
 
+-include_lib("lager/include/lager.hrl").
+
 %% Helper macro for declaring children of supervisor
 -define(CHILD(I, Type), {I, {I, start_link, []}, permanent, 5000, Type, [I]}).
 
@@ -17,7 +19,9 @@
 %% ===================================================================
 
 start_link() ->
+    lager:info("Initializing push registration API", []),
     ok = sc_push_reg_api:init(),
+    lager:info("Push registration API ready", []),
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %% ===================================================================
