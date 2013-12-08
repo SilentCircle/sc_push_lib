@@ -18,22 +18,20 @@
 
 -export([
         make_id_test/1,
+        make_svc_tok_test/1,
         make_push_props_test/1,
         is_valid_push_reg_test/1,
         register_id_test/1,
         reregister_id_test/1,
-        reregister_by_device_id_test/1,
         register_ids_test/1,
-        register_dup_device_ids_test/1,
         register_ids_bad_id_test/1,
         deregister_ids_bad_id_test/1,
         all_registration_info_test/1,
         get_registration_info_test/1,
         get_registration_info_by_id_test/1,
+        get_registration_info_by_tag_test/1,
         get_registration_info_not_found_test/1,
         get_registration_info_by_id_not_found_test/1,
-        get_registration_info_by_device_id_test/1,
-        get_registration_info_by_device_id_not_found_test/1,
         reqmgr_test/1,
         sc_config_test/1
     ]).
@@ -113,6 +111,9 @@ init_per_suite(Config) ->
     ok = application:start(sasl),
     ok = application:load(lager),
     [ok = application:set_env(lager, K, V) || {K, V} <- lager_config(Config)],
+    ok = application:start(compiler),
+    ok = application:start(syntax_tools),
+    ok = application:start(goldrush),
     ok = application:start(lager),
     Registration = ct:get_config(registration),
     ct:pal("Registration: ~p~n", [Registration]),
@@ -226,21 +227,19 @@ groups() ->
             [],
             [
                 make_id_test,
+                make_svc_tok_test,
                 make_push_props_test,
                 is_valid_push_reg_test,
                 register_id_test,
                 reregister_id_test,
-                reregister_by_device_id_test,
                 register_ids_test,
-                register_dup_device_ids_test,
                 register_ids_bad_id_test,
                 deregister_ids_bad_id_test,
                 get_registration_info_test,
                 all_registration_info_test,
                 get_registration_info_by_id_test,
+                get_registration_info_by_tag_test,
                 get_registration_info_by_id_not_found_test,
-                get_registration_info_by_device_id_test,
-                get_registration_info_by_device_id_not_found_test,
                 get_registration_info_not_found_test
             ]
         },
@@ -298,12 +297,22 @@ make_id_test(doc) ->
 make_id_test(suite) ->
     [];
 make_id_test(_Config) ->
+    ExpectedID = <<"abcdef">>,
+    ExpectedID = sc_push_reg_api:make_id(ExpectedID),
+    ExpectedID = sc_push_reg_api:make_id(binary_to_list(ExpectedID)),
+    ok.
+
+make_svc_tok_test(doc) ->
+    ["sc_push_reg_api:make_svc_tok/2 should create a canonical registration svc_tok"];
+make_svc_tok_test(suite) ->
+    [];
+make_svc_tok_test(_Config) ->
     ExpSvc = 'apns',
     ExpToken = <<"abcdef">>,
     ExpectedID = {ExpSvc, ExpToken},
-    ExpectedID = sc_push_reg_api:make_id(ExpSvc, ExpToken),
-    ExpectedID = sc_push_reg_api:make_id(atom_to_list(ExpSvc), ExpToken),
-    ExpectedID = sc_push_reg_api:make_id(atom_to_list(ExpSvc), binary_to_list(ExpToken)),
+    ExpectedID = sc_push_reg_api:make_svc_tok(ExpSvc, ExpToken),
+    ExpectedID = sc_push_reg_api:make_svc_tok(atom_to_list(ExpSvc), ExpToken),
+    ExpectedID = sc_push_reg_api:make_svc_tok(atom_to_list(ExpSvc), binary_to_list(ExpToken)),
     ok.
 
 is_valid_push_reg_test(doc) ->
@@ -319,7 +328,7 @@ is_valid_push_reg_test(Config) ->
     DeviceId = <<"test_device_id">>,
 
     GoodProps = sc_push_reg_db:make_sc_push_props(Service, Token, DeviceId, Tag,
-                                                  AppId, Dist),
+                                                  AppId, Dist, 1, os:timestamp()),
 
     true = sc_push_reg_api:is_valid_push_reg(GoodProps),
 
@@ -329,7 +338,7 @@ is_valid_push_reg_test(Config) ->
     Config.
 
 make_push_props_test(doc) ->
-    ["Test sc_push_reg_db:make_sc_push_props/6"];
+    ["Test sc_push_reg_db:make_sc_push_props/8"];
 make_push_props_test(suite) ->
     [];
 make_push_props_test(Config) ->
@@ -339,29 +348,37 @@ make_push_props_test(Config) ->
     AppId = <<"my_app_id">>,
     Dist = <<"prod">>,
     DeviceId = <<"test_device_id">>,
+    Version = 1,
+    Modified = os:timestamp(),
 
     Props = sc_push_reg_db:make_sc_push_props(Service, Token, DeviceId, Tag,
-                                              AppId, Dist),
+                                              AppId, Dist, Version, Modified),
     Service = value(service, Props),
     Token = value(token, Props),
     Tag = value(tag, Props),
     AppId = value(app_id, Props),
     Dist = value(dist, Props),
     DeviceId = value(device_id, Props),
+    Version = value(version, Props),
+    Modified = value(modified, Props),
 
-    %% Check that it will work from strings, too
+    %% Check that it will work from strings, too (except version and modified)
     Props1 = sc_push_reg_db:make_sc_push_props(atom_to_list(Service),
                                                binary_to_list(Token),
                                                binary_to_list(DeviceId),
                                                binary_to_list(Tag),
                                                binary_to_list(AppId),
-                                               binary_to_list(Dist)),
+                                               binary_to_list(Dist),
+                                               Version, Modified
+                                           ),
     Service = value(service, Props1),
     Token = value(token, Props1),
     Tag = value(tag, Props1),
     AppId = value(app_id, Props1),
     Dist = value(dist, Props1),
     DeviceId = value(device_id, Props1),
+    Version = value(version, Props1),
+    Modified = value(modified, Props1),
 
     Config.
 
@@ -371,12 +388,14 @@ register_id_test(suite) ->
     [];
 register_id_test(Config) ->
     RegPL = value(registration, Config),
-    ok = sc_push_reg_api:register_id(RegPL),
+    Result = sc_push_reg_api:register_id(RegPL),
+    ct:pal("register_id returned ~p~n", [Result]),
+    ok = Result,
     ct:pal("Registered ~p~n", [RegPL]),
     deregister_id(RegPL).
 
 reregister_id_test(doc) ->
-    ["sc_push_reg_api:reregister_id/2 should reregister an existing reg with a new ID"];
+    ["sc_push_reg_api:reregister_id/2 should reregister an existing reg with a new token"];
 reregister_id_test(suite) ->
     [];
 reregister_id_test(Config) ->
@@ -384,47 +403,22 @@ reregister_id_test(Config) ->
     ok = sc_push_reg_api:register_id(RegPL),
     ct:pal("Registered ~p~n", [RegPL]),
 
-    OldService = value(service, RegPL),
-    OldTok = value(token, RegPL),
-    OldId = sc_push_reg_api:make_id(OldService, OldTok),
+    ID = value(device_id, RegPL),
+    OldId = sc_push_reg_api:make_id(ID),
     NewTok = <<"thisisanewtoken">>,
     ok = sc_push_reg_api:reregister_id(OldId, NewTok),
 
-    Tag = value(tag, RegPL),
-    ListOfRegPL = sc_push_reg_api:get_registration_info(Tag),
+    ListOfRegPL = sc_push_reg_api:get_registration_info_by_id(ID),
     [[{_,_}|_] = NewRegPL] = ListOfRegPL,
 
-    % Does this have the tag?
-    NewTag = value(tag, NewRegPL),
-    % Does this have the *right* tag?
-    NewTag = sc_util:to_bin(Tag),
+    % Does this have the ID?
+    NewID = value(device_id, NewRegPL),
+    % Does this have the *right* ID?
+    NewID = sc_util:to_bin(ID),
     % Does this have the right service and token?
+    OldService = value(service, RegPL),
     OldService = value(service, NewRegPL),
-    NewTok = value(token, NewRegPL),
-
-    deregister_id(RegPL),
-    deregister_id(NewRegPL).
-
-reregister_by_device_id_test(doc) ->
-    ["sc_push_reg_api:reregister_by_device_id/2 should reregister an existing reg with a new device ID"];
-reregister_by_device_id_test(suite) ->
-    [];
-reregister_by_device_id_test(Config) ->
-    RegPL = value(registration, Config),
-    ok = sc_push_reg_api:register_id(RegPL),
-    ct:pal("Registered ~p~n", [RegPL]),
-
-    DeviceID = value(device_id, RegPL),
-    NewTok = <<"thisisanewtoken">>,
-    ok = sc_push_reg_api:reregister_by_device_id(DeviceID, NewTok),
-
-    NewRegPL = sc_push_reg_api:get_registration_info_by_device_id(DeviceID),
-
-    % Does this have the device ID?
-    NewDeviceID = value(device_id, NewRegPL),
-    % Does this have the *right* tag?
-    NewDeviceID = sc_util:to_bin(DeviceID),
-    % Does this have the right token?
+    
     NewTok = value(token, NewRegPL),
 
     deregister_id(RegPL),
@@ -438,20 +432,6 @@ register_ids_test(Config) ->
     RegPL = value(registration, Config),
     ok = sc_push_reg_api:register_ids([RegPL]),
     ct:pal("Registered ~p~n", [RegPL]),
-    deregister_ids([RegPL]),
-    ok.
-
-register_dup_device_ids_test(doc) ->
-    ["sc_push_reg_api:register_ids/1 should fail to register a duplicate device IDs for different tokens"];
-register_dup_device_ids_test(suite) ->
-    [];
-register_dup_device_ids_test(Config) ->
-    RegPL = value(registration, Config),
-    ok = sc_push_reg_api:register_ids([RegPL]),
-    ct:pal("Registered ~p~n", [RegPL]),
-    RegPLDupID = [{token, <<"Some other token">>} |lists:keydelete(token, 1, RegPL)],
-    {error, _} = sc_push_reg_api:register_ids([RegPLDupID]),
-    ct:pal("Correctly detected duplicate reg error in ~p~n", [RegPLDupID]),
     deregister_ids([RegPL]),
     ok.
 
@@ -474,8 +454,7 @@ deregister_ids_bad_id_test(suite) ->
     [];
 deregister_ids_bad_id_test(Config) ->
     ?assertThrow(sc_push_reg_api:deregister_ids(totally_invalid_input), error, function_clause),
-    {error, {bad_reg_id, _}} = sc_push_reg_api:deregister_ids([totally_invalid_input]),
-    {error, _} = sc_push_reg_api:deregister_ids([{<<1,2,3>>, <<4,5,6>>}]),
+    ?assertThrow(sc_push_reg_api:deregister_ids([totally_invalid_input]), error, function_clause),
 
     ct:pal("deregister_ids correctly identified bad input~n", []),
     Config.
@@ -501,6 +480,7 @@ get_registration_info_test(Config) ->
     ok = sc_push_reg_api:register_id(RegPL),
     Tag = value(tag, RegPL),
     ListOfRegPL = sc_push_reg_api:get_registration_info(Tag),
+    true = is_list(ListOfRegPL),
     % Does this look like a list of one non-empty proplist?
     [[{_,_}|_] = NewRegPL] = ListOfRegPL,
     % Does this have the tag?
@@ -512,17 +492,15 @@ get_registration_info_test(Config) ->
     ct:pal("Got reginfo for tag ~p:~n~p", [NewTag, NewRegPL]),
     deregister_id(RegPL).
 
-get_registration_info_by_id_test(doc) ->
-    ["sc_push_reg_api:get_registration_info_by_id_by_id/1 should get the correct reg info for a single reg ID"];
-get_registration_info_by_id_test(suite) ->
+get_registration_info_by_tag_test(doc) ->
+    ["sc_push_reg_api:get_registration_info_by_tag/1 should get the correct reg info for a reg tag"];
+get_registration_info_by_tag_test(suite) ->
     [];
-get_registration_info_by_id_test(Config) ->
+get_registration_info_by_tag_test(Config) ->
     RegPL = value(registration, Config),
     ok = sc_push_reg_api:register_id(RegPL),
-    Service = value(service, RegPL),
-    Token = value(token, RegPL),
-    ID = sc_push_reg_api:make_id(Service, Token),
-    NewRegPL = sc_push_reg_api:get_registration_info_by_id(ID),
+    Tag = value(tag, RegPL),
+    [NewRegPL] = sc_push_reg_api:get_registration_info_by_tag(Tag),
     % Does this have tag?
     NewTag = value(tag, NewRegPL),
     % Does this have the *right* tag?
@@ -534,21 +512,21 @@ get_registration_info_by_id_test(Config) ->
     ct:pal("Got reginfo for ID ~p:~n~p", [NewTag, NewRegPL]),
     deregister_id(RegPL).
 
-get_registration_info_by_device_id_test(doc) ->
-    ["sc_push_reg_api:get_registration_info_by_device_id/1 should get the correct reg info for a single device ID"];
-get_registration_info_by_device_id_test(suite) ->
+get_registration_info_by_id_test(doc) ->
+    ["sc_push_reg_api:get_registration_info_by_id/1 should get the correct reg info for a single device ID"];
+get_registration_info_by_id_test(suite) ->
     [];
-get_registration_info_by_device_id_test(Config) ->
+get_registration_info_by_id_test(Config) ->
     RegPL = value(registration, Config),
     ok = sc_push_reg_api:register_id(RegPL),
-    DeviceID = value(device_id, RegPL),
-    NewRegPL = sc_push_reg_api:get_registration_info_by_device_id(DeviceID),
+    ID = value(device_id, RegPL),
+    [NewRegPL] = sc_push_reg_api:get_registration_info_by_id(ID),
     % Does this have device ID?
-    NewDevID = value(device_id, NewRegPL),
-    % Does this have the *right* device_id?
-    NewDevID = sc_util:to_bin(DeviceID),
+    NewID = value(device_id, NewRegPL),
+    % Does this have the *right* id?
+    NewID = sc_util:to_bin(ID),
 
-    ct:pal("Got reginfo for ID ~p:~n~p", [NewDevID, NewRegPL]),
+    ct:pal("Got reginfo for ID ~p:~n~p", [NewID, NewRegPL]),
     deregister_id(RegPL).
 
 get_registration_info_not_found_test(doc) ->
@@ -566,19 +544,9 @@ get_registration_info_by_id_not_found_test(doc) ->
 get_registration_info_by_id_not_found_test(suite) ->
     [];
 get_registration_info_by_id_not_found_test(Config) ->
-    FakeID = sc_push_reg_api:make_id(bogus_service, <<"Bogus Token">>),
+    FakeID = sc_push_reg_api:make_id(<<"Bogus ID">>),
     notfound = sc_push_reg_api:get_registration_info_by_id(FakeID),
     ct:pal("Got expected 'notfound' result for ID ~p~n", [FakeID]),
-    Config.
-
-get_registration_info_by_device_id_not_found_test(doc) ->
-    ["sc_push_reg_api:get_registration_info_by_id/1 should not find this reg info"];
-get_registration_info_by_device_id_not_found_test(suite) ->
-    [];
-get_registration_info_by_device_id_not_found_test(Config) ->
-    FakeDevID = <<"foobarbaz">>,
-    notfound = sc_push_reg_api:get_registration_info_by_device_id(FakeDevID),
-    ct:pal("Got expected 'notfound' result for device ID ~p~n", [FakeDevID]),
     Config.
 
 %%--------------------------------------------------------------------
@@ -664,6 +632,7 @@ init_per_testcase_common(Config) ->
     (catch end_per_testcase_common(Config)),
     ok = mnesia:create_schema([node()]),
     ok = mnesia:start(),
+    ok = application:start(unsplit),
     ok = application:start(jsx),
     ok = application:start(sc_util),
     ok = application:start(sc_push_lib),
@@ -673,6 +642,7 @@ end_per_testcase_common(Config) ->
     ok = application:stop(sc_push_lib),
     ok = application:stop(sc_util),
     ok = application:stop(jsx),
+    ok = application:stop(unsplit),
     stopped = mnesia:stop(),
     ok = mnesia:delete_schema([node()]),
     Config.
@@ -688,9 +658,8 @@ deregister_ids(RegPLs) ->
     ct:pal("Deregistered IDs ~p~n", [IDs]).
 
 id_from_reg_props(RegPL) ->
-    Service = value(service, RegPL),
-    Token = value(token, RegPL),
-    sc_push_reg_api:make_id(Service, Token).
+    ID = value(device_id, RegPL),
+    sc_push_reg_api:make_id(ID).
 
 try_bad_gen_server_req(SvrRef) ->
     % Try a bad request
@@ -733,10 +702,12 @@ make_n_reg_ids(N) ->
 make_reg_id_n(N) ->
     sc_push_reg_db:make_sc_push_props(oneof([apns, gcm]),
                                       make_binary(<<"tok">>, N),
-                                      make_binary(<<"dev">>, N),
+                                      make_binary(<<"some_uuid">>, N),
                                       make_binary(<<"tag">>, N),
                                       make_binary(<<"app_id">>, N),
-                                      oneof([<<"prod">>, <<"dev">>])).
+                                      oneof([<<"prod">>, <<"dev">>]),
+                                      1, os:timestamp()
+                                    ).
 
 make_binary(<<BinPrefix/binary>>, N) when is_integer(N), N >= 0 ->
     <<BinPrefix/binary, $_, (sc_util:to_bin(N))/binary>>. 
@@ -761,8 +732,10 @@ sorted_reg_pls_equal([], []) ->
 sorted_reg_pls_equal(PLs1, PLs2) ->
     throw({unequal_list_of_proplists, PLs1, PLs2}).
 
+%% Don't compare version and modified because those are guaranteed to be changed
+%% every time the record is written.
 reg_pl_equal(PL1, PL2) ->
     lists:all(fun(K) -> proplists:get_value(K, PL1) =:= proplists:get_value(K, PL2) end,
-              [service, token, tag, app_id, dist]).
+              [service, token, tag, app_id, dist, id]).
 
 
