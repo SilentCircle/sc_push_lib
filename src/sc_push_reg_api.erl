@@ -13,6 +13,7 @@
     get_registration_info/1,
     get_registration_info_by_id/1,
     get_registration_info_by_tag/1,
+    get_registration_info_by_svc_tok/1,
     get_registration_info_by_svc_tok/2,
     is_valid_push_reg/1,
     make_id/1,
@@ -126,10 +127,15 @@ get_registration_info_by_tag(Tag) ->
     sc_push_reg_db:get_registration_info_by_tag(Tag).
 
 %% @doc Get the registration information using service+token
+-spec get_registration_info_by_svc_tok(sc_push_reg_db:svc_tok_key()) ->
+    sc_types:reg_proplist() | notfound.
+get_registration_info_by_svc_tok(SvcTok) ->
+    sc_push_reg_db:get_registration_info_by_svc_tok(SvcTok).
+
 -spec get_registration_info_by_svc_tok(atom(), binary()) ->
     sc_types:reg_proplist() | notfound.
 get_registration_info_by_svc_tok(Svc, Tok) ->
-    sc_push_reg_db:get_registration_info_by_svc_tok(make_svc_tok(Svc, Tok)).
+    ?MODULE:get_registration_info_by_svc_tok(make_svc_tok(Svc, Tok)).
 
 %% @doc Validate push registration proplist.
 -spec is_valid_push_reg(list()) -> boolean().
