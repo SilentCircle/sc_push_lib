@@ -8,11 +8,15 @@
     deregister_id/1,
     deregister_ids/1,
     deregister_tag/1,
+    deregister_tags/1,
     deregister_svc_tok/1,
+    deregister_svc_toks/1,
     deregister_device_id/1,
+    deregister_device_ids/1,
     all_registration_info/0,
     get_registration_info/1,
     get_registration_info_by_id/1,
+    get_registration_info_by_id/2,
     get_registration_info_by_tag/1,
     get_registration_info_by_device_id/1,
     get_registration_info_by_svc_tok/1,
@@ -29,7 +33,6 @@
 %%--------------------------------------------------------------------
 -type atom_or_str() :: atom() | string().
 -type bin_or_str() :: binary() | string().
--type binable() :: atom() | binary() | integer() | iolist().
 
 %%====================================================================
 %% API
@@ -70,7 +73,7 @@ register_ids([[{_, _}|_]|_] = ListOfProplists) ->
             {error, Reason}
     end.
 
-%% @doc Deregister all ids using a common tag
+%% @doc Deregister all registrations using a common tag
 -spec deregister_tag(binary()) -> ok | {error, term()}.
 deregister_tag(<<>>) ->
     {error, empty_tag};
@@ -82,7 +85,17 @@ deregister_tag(Tag) when is_binary(Tag) ->
             {error, Reason}
     end.
 
-%% @doc Deregister all ids using a common device ID
+%% @doc Deregister all registrations corresponding to a list of tags.
+-spec deregister_tags(list(binary())) -> ok | {error, term()}.
+deregister_tags(Tags) when is_list(Tags) ->
+    try
+        sc_push_reg_db:delete_push_regs_by_tags(Tags)
+    catch
+        _:Reason ->
+            {error, Reason}
+    end.
+
+%% @doc Deregister all registrations using a common device ID
 -spec deregister_device_id(binary()) -> ok | {error, term()}.
 deregister_device_id(<<>>) ->
     {error, empty_device_id};
@@ -94,7 +107,17 @@ deregister_device_id(DeviceID) when is_binary(DeviceID) ->
             {error, Reason}
     end.
 
-%% @doc Deregister all ids with common service+push token
+%% @doc Deregister all registrations corresponding to a list of device IDs.
+-spec deregister_device_ids(list(binary())) -> ok | {error, term()}.
+deregister_device_ids(DeviceIDs) when is_list(DeviceIDs) ->
+    try
+        sc_push_reg_db:delete_push_regs_by_device_ids(DeviceIDs)
+    catch
+        _:Reason ->
+            {error, Reason}
+    end.
+
+%% @doc Deregister all registrations with common service+push token
 -spec deregister_svc_tok(sc_push_reg_db:svc_tok_key()) -> ok | {error, term()}.
 deregister_svc_tok({_, <<>>}) ->
     {error, empty_token};
@@ -106,12 +129,22 @@ deregister_svc_tok({_, <<_/binary>>} = SvcTok) ->
             {error, Reason}
     end.
 
-%% @doc Deregister id
+%% @doc Deregister all registrations corresponding to list of service-tokens.
+-spec deregister_svc_toks([sc_push_reg_db:svc_tok_key()]) -> ok | {error, term()}.
+deregister_svc_toks(SvcToks) when is_list(SvcToks) ->
+    try
+        sc_push_reg_db:delete_push_regs_by_svc_toks(to_svc_toks(SvcToks))
+    catch
+        _:Reason ->
+            {error, Reason}
+    end.
+
+%% @doc Deregister by id.
 -spec deregister_id(sc_push_reg_db:reg_id_key()) -> ok | {error, term()}.
 deregister_id(ID) ->
     deregister_ids([ID]).
 
-%% @doc Deregister multiple ids
+%% @doc Deregister using list of ids.
 -spec deregister_ids([sc_push_reg_db:reg_id_key()]) -> ok | {error, term()}.
 deregister_ids([]) ->
     ok;
@@ -125,7 +158,7 @@ deregister_ids([{<<_/binary>>, <<_/binary>>}|_] = IDs) ->
 
 %% @doc Get registration information.
 %% @equiv get_registration_info_by_tag/1
--spec get_registration_info(binable()) ->
+-spec get_registration_info(bin_or_str()) ->
     sc_types:reg_proplist() | notfound.
 get_registration_info(Tag) ->
     get_registration_info_by_tag(Tag).
@@ -136,6 +169,12 @@ get_registration_info(Tag) ->
     sc_types:reg_proplist() | notfound.
 get_registration_info_by_id(ID) ->
     sc_push_reg_db:get_registration_info_by_id(ID).
+
+%% @equiv get_registration_info_by_id/1
+-spec get_registration_info_by_id(bin_or_str(), bin_or_str()) ->
+    sc_types:reg_proplist() | notfound.
+get_registration_info_by_id(DeviceID, Tag) ->
+    get_registration_info_by_id(make_id(DeviceID, Tag)).
 
 %% @doc Get registration information by tag.
 -spec get_registration_info_by_tag(binary()) ->
@@ -168,13 +207,13 @@ is_valid_push_reg(PL) ->
 
 %% @doc Create a unique id from device_id and tag.
 -compile({inline, [{make_id, 2}]}).
--spec make_id(binable(), binable()) -> sc_push_reg_db:reg_id_key().
+-spec make_id(bin_or_str(), bin_or_str()) -> sc_push_reg_db:reg_id_key().
 make_id(DeviceID, Tag) ->
     sc_push_reg_db:make_id(DeviceID, Tag).
 
 %% @equiv make_svc_tok/2
 -compile({inline, [{make_svc_tok, 1}]}).
--spec make_svc_tok({atom_or_str(), binable()} | sc_push_reg_db:svc_tok_key())
+-spec make_svc_tok({atom_or_str(), bin_or_str()} | sc_push_reg_db:svc_tok_key())
     -> sc_push_reg_db:svc_tok_key().
 make_svc_tok({Svc, Tok} = SvcTok) when is_atom(Svc), is_binary(Tok) ->
     SvcTok;
@@ -183,7 +222,7 @@ make_svc_tok({Svc, Tok}) ->
 
 %% @doc Create service-token key
 -compile({inline, [{make_svc_tok, 2}]}).
--spec make_svc_tok(atom_or_str(), binable()) -> sc_push_reg_db:svc_tok_key().
+-spec make_svc_tok(atom_or_str(), bin_or_str()) -> sc_push_reg_db:svc_tok_key().
 make_svc_tok(Svc, Tok) ->
     sc_push_reg_db:make_svc_tok(Svc, Tok).
 
@@ -193,4 +232,8 @@ make_svc_tok(Svc, Tok) ->
 -compile({inline, [{to_ids, 1}]}).
 to_ids(IDs) ->
     [make_id(DeviceID, Tag) || {DeviceID, Tag} <- IDs].
+
+-compile({inline, [{to_svc_toks, 1}]}).
+to_svc_toks(SvcToks) ->
+    [make_svc_tok(Svc, Tok) || {Svc, Tok} <- SvcToks].
 

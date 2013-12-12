@@ -1,7 +1,7 @@
 {application, sc_push_lib,
     [
         {description, "Silent Circle Push Notification Application Library Support"},
-        {vsn, "1.1.1"},
+        {vsn, "1.1.2"},
         {registered, []},
         {applications, [
                 kernel,
@@ -9,6 +9,9 @@
                 sasl,
                 mnesia,
                 unsplit,
+                compiler,
+                syntax_tools,
+                goldrush,
                 lager,
                 sc_util
             ]},
