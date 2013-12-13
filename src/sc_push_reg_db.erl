@@ -1,27 +1,30 @@
 -module(sc_push_reg_db).
 
 -export([
-        make_id/2,
-        all_registration_info/0,
         all_reg/0,
-        get_registration_info_by_id/1,
-        get_registration_info_by_device_id/1,
-        get_registration_info_by_tag/1,
-        save_push_regs/1,
-        delete_push_regs/1,
-        delete_push_regs_by_device_id/1,
-        delete_push_regs_by_tag/1,
-        reregister_id/2,
-        reregister_by_device_id/2,
-        is_valid_push_reg/1,
-        check_ids/1,
+        all_registration_info/0,
         check_id/1,
-        split_id/1,
-        make_sc_push_props/6
+        check_ids/1,
+        create_tables/1,
+        delete_push_regs_by_device_ids/1,
+        delete_push_regs_by_ids/1,
+        delete_push_regs_by_svc_toks/1,
+        delete_push_regs_by_tags/1,
+        get_registration_info_by_device_id/1,
+        get_registration_info_by_id/1,
+        get_registration_info_by_svc_tok/1,
+        get_registration_info_by_tag/1,
+        is_valid_push_reg/1,
+        make_id/2,
+        make_sc_push_props/8,
+        make_svc_tok/2,
+        reregister_ids/1,
+        save_push_regs/1
     ]).
 
 -export_type([
-        reg_id_key/0
+        reg_id_key/0,
+        svc_tok_key/0
         ]).
 
 -include("sc_push_lib.hrl").
@@ -30,7 +33,8 @@
 %%--------------------------------------------------------------------
 %% Types
 %%--------------------------------------------------------------------
--opaque reg_id_key() :: {atom(), binary()}.
+-type reg_id_key() :: {binary(), binary()}.
+-type svc_tok_key() :: {atom(), binary()}.
 -type atom_or_str() :: atom() | string().
 -type atomable() :: atom() | string() | binary().
 -type binable() :: atom() | binary() | integer() | iolist().
@@ -39,26 +43,17 @@
 %%--------------------------------------------------------------------
 %% Records
 %%--------------------------------------------------------------------
-% Keying by JID with resource was not such a good idea. If resource changes,
-% such as server-generated resources, this will simply not work or will grow
-% without bound. Create a unique ID based on {service, token}, and use binary
-% tags instead of XMPP-specific identifiers like {User, Server}.  We rely on
-% the feedback services to tell us when a token is no longer valid so that we
-% can delete the obsolete token record.
-%
-% id is composed of {service :: atom(), token :: binary()}.  service is the
-% push service, currently only apns (Apple) and gcm (Google) token is the push
-% token as sent to the push service.
-%
-% Note: It's better to add new fields at the end of the record because it doesn't
-% mess with any indexes (which are correlated by field number).
+% id is a globally unique identifier that is used to identify
+% an app/device/user combination anonymously.
 -record(sc_pshrg, {
-        id = {undefined, <<>>} :: reg_id_key(), % {service, token (APNS token, Android reg ID)}
+        id = {<<>>, <<>>} :: reg_id_key(),
+        device_id = <<>> :: binary(),
         tag = <<>> :: binary(), % User identification tag, e.g. <<"user@server">>
+        svc_tok = {undefined, <<>>} :: svc_tok_key(),
         app_id = <<>> :: binary(), % iOS AppBundleID, Android package
         dist = <<>> :: binary(), % distribution <<>> is same as <<"prod">>, or <<"dev">>
-        last_updated = now(),
-        device_id = <<>> :: binary()
+        version = 0 :: non_neg_integer(), % unsplit support
+        modified = {0, 0, 0} :: erlang:timestamp()    % unsplit support
     }).
 
 -type push_reg_list() :: list(#sc_pshrg{}).
@@ -66,142 +61,209 @@
 %%====================================================================
 %% API
 %%====================================================================
+%% @doc Return a list of property lists of all registrations.
+%% @deprecated For debug only
 -spec all_registration_info() -> [sc_types:reg_proplist()].
 all_registration_info() ->
     [sc_pshrg_to_props(R) || R <- all_reg()].
 
-%% @doc Get the registration information using a key returned by make_id/2.
--spec get_registration_info_by_id(reg_id_key()) ->
-    sc_types:reg_proplist() | notfound.
-get_registration_info_by_id(ID) ->
-    case lookup_reg_id(ID) of
-        [#sc_pshrg{} = Reg] ->
-            sc_pshrg_to_props(Reg);
-        [] ->
-            notfound
-    end.
+%% @doc Return a list of all pus registraion records.
+%% @deprecated For debug only.
+-spec all_reg() -> push_reg_list().
+all_reg() ->
+    do_txn(fun() ->
+                mnesia:select(sc_pshrg, ets:fun2ms(fun(R) -> R end))
+        end).
 
-%% @doc Get the registration information using device_id
--spec get_registration_info_by_device_id(binary()) ->
-    sc_types:reg_proplist() | notfound.
-get_registration_info_by_device_id(ID) ->
-    case lookup_device_id(ID) of
-        [#sc_pshrg{} = Reg] ->
-            sc_pshrg_to_props(Reg);
-        [] ->
-            notfound
-    end.
-
--spec get_registration_info_by_tag(binary()) ->
-    list(sc_types:reg_proplist()) | notfound.
-get_registration_info_by_tag(Tag) ->
-    case lookup_reg_tag(Tag) of
-        [#sc_pshrg{}|_] = Regs ->
-            [sc_pshrg_to_props(Reg) || Reg <- Regs];
-        [] ->
-            notfound
-    end.
-
-%% @doc Create a registration proplist required by other functions
-%% in this API.
--spec make_sc_push_props(atomable(), binable(), binable(),
-                         binable(), binable(), binable())
-    -> [{'app_id', binary()} |
-        {'dist', binary()} |
-        {'service', atom()} |
-        {'device_id', binary()} |
-        {'tag', binary()} |
-        {'token', binary()}].
-
-make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist) ->
-    [
-        {service, sc_util:to_atom(Service)},
-        {token, sc_util:to_bin(Token)},
-        {device_id, sc_util:to_bin(DeviceId)},
-        {tag, sc_util:to_bin(Tag)},
-        {app_id, sc_util:to_bin(AppId)},
-        {dist, sc_util:to_bin(Dist)}
-    ].
-
-%% @doc Create an opaque registration ID key for use with other functions
-%% in this API.
--spec make_id(atom_or_str(), binable()) -> reg_id_key().
-make_id(Service, Token) when is_atom(Service) ->
-    {Service, sc_util:to_bin(Token)};
-make_id(Service, Token) when is_list(Service) ->
-    make_id(list_to_atom(Service), Token).
-
-%%====================================================================
-%% Internal functions
-%%====================================================================
-make_sc_pshrg([_|_] = Props)  ->
-    SvcAsStr = sc_util:to_list(sc_util:val(service, Props, "apns")),
-    Service = sc_util:to_atom(sc_util:req_s(SvcAsStr)),
-
-    Token = sc_util:req_val(token, Props),
-    Tag = sc_util:val(tag, Props, ""),
-    DeviceId = sc_util:val(device_id, Props, ""),
-    AppId = sc_util:req_val(app_id, Props),
-    Dist = sc_util:val(dist, Props, ""),
-
-    make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist).
-
-make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist) when is_atom(Service) ->
-    #sc_pshrg{
-        id = make_id(Service, Token),
-        tag = sc_util:to_bin(Tag),
-        device_id = sc_util:to_bin(DeviceId),
-        app_id = sc_util:to_bin(AppId),
-        dist = sc_util:to_bin(Dist)
-    }.
-
-is_valid_push_reg(PL) ->
-    try make_sc_pshrg(PL) of
-        _ -> true
-    catch _:_ -> false
-    end.
-
-sc_pshrg_to_props(#sc_pshrg{id = ID,
-                            device_id = DeviceId,
-                            tag = Tag,
-                            app_id = AppId,
-                            dist = Dist}) ->
-    {Service, Token} = split_id(ID),
-    make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist).
-
--spec split_id(reg_id_key()) -> {atom(), binary()}.
-split_id(ID) ->
-    ID.
-
+%% @doc Check registration id key.
 -spec check_id(reg_id_key()) -> reg_id_key().
 check_id(ID) ->
-    case split_id(ID) of
-       {S, T} when is_atom(S), is_binary(T) ->
+    case ID of
+        {<<_, _/binary>>, <<_, _/binary>>} ->
            ID;
        _ ->
            throw({bad_reg_id, ID})
     end.
 
+%% @doc Check multiple registration id keys.
 -spec check_ids(reg_id_keys()) -> reg_id_keys().
 check_ids(IDs) when is_list(IDs) ->
     [check_id(ID) || ID <- IDs].
 
-%%--------------------------------------------------------------------
-%% Database functions
-%%--------------------------------------------------------------------
 create_tables(Nodes) ->
     Defs = [
         {sc_pshrg, 
-            [{disc_copies, Nodes},
+            [
+                {disc_copies, Nodes},
                 {type, set},
-                {index, [#sc_pshrg.tag, #sc_pshrg.device_id]},
-                {attributes, record_info(fields, sc_pshrg)}]
+                {index, [#sc_pshrg.device_id, #sc_pshrg.tag, #sc_pshrg.svc_tok]},
+                {attributes, record_info(fields, sc_pshrg)},
+                {user_properties,
+                    [{unsplit_method, {unsplit_lib, last_modified, []}}]
+                }
+            ]
         }
     ],
 
     [create_table(Tab, Attrs) || {Tab, Attrs} <- Defs],
     upgrade_tables().
 
+%% @doc Delete push registrations by device ids
+-spec delete_push_regs_by_device_ids([binary()]) -> ok | {error, term()}.
+delete_push_regs_by_device_ids(DeviceIDs) when is_list(DeviceIDs) ->
+    do_txn(delete_push_regs_by_device_id_txn(), [DeviceIDs]).
+
+%% @doc Delete push registrations by internal registration id.
+-spec delete_push_regs_by_ids(reg_id_keys()) -> ok | {error, term()}.
+delete_push_regs_by_ids(IDs) ->
+    do_txn(delete_push_regs_txn(), [IDs]).
+
+%% @doc Delete push registrations by service-token.
+-spec delete_push_regs_by_svc_toks([svc_tok_key()]) -> ok | {error, term()}.
+delete_push_regs_by_svc_toks(SvcToks) when is_list(SvcToks) ->
+    do_txn(delete_push_regs_by_svc_tok_txn(), [SvcToks]).
+
+%% @doc Delete push registrations by tags.
+-spec delete_push_regs_by_tags([binary()]) -> ok | {error, term()}.
+delete_push_regs_by_tags(Tags) when is_list(Tags) ->
+    do_txn(delete_push_regs_by_tag_txn(), [Tags]).
+
+%% @doc Get registration information by device id.
+-spec get_registration_info_by_device_id(binary()) ->
+    list(sc_types:reg_proplist()) | notfound.
+get_registration_info_by_device_id(DeviceID) ->
+    get_registration_info_impl(DeviceID, fun lookup_reg_device_id/1).
+
+%% @doc Get registration information by unique id.
+%% @see make_id/2
+-spec get_registration_info_by_id(reg_id_key()) ->
+    list(sc_types:reg_proplist()) | notfound.
+get_registration_info_by_id(ID) ->
+    get_registration_info_impl(ID, fun lookup_reg_id/1).
+
+%% @doc Get registration information by service-token.
+%% @see make_svc_tok/2
+-spec get_registration_info_by_svc_tok(svc_tok_key()) ->
+    list(sc_types:reg_proplist()) | notfound.
+get_registration_info_by_svc_tok({_Service, _Token} = SvcTok) ->
+    get_registration_info_impl(SvcTok, fun lookup_svc_tok/1).
+
+%% @doc Get registration information by tag.
+-spec get_registration_info_by_tag(binary()) ->
+    list(sc_types:reg_proplist()) | notfound.
+get_registration_info_by_tag(Tag) ->
+    get_registration_info_impl(Tag, fun lookup_reg_tag/1).
+
+%% @doc Is push registration proplist valid?
+-spec is_valid_push_reg(sc_types:proplist(atom(), term())) -> boolean().
+is_valid_push_reg(PL) ->
+    try make_sc_pshrg(PL) of
+        _ -> true
+    catch _:_ -> false
+    end.
+
+%% @doc Convert to an opaque registration ID key.
+-spec make_id(binable(), binable()) -> reg_id_key().
+make_id(Id, Tag) ->
+    case {sc_util:to_bin(Id), sc_util:to_bin(Tag)} of
+        {<<_,_/binary>>, <<_,_/binary>>} = Key ->
+            Key;
+        _IdTag ->
+            throw({invalid_id_or_tag, {Id, Tag}})
+    end.
+
+%% @doc Create a registration proplist required by other functions
+%% in this API.
+-spec make_sc_push_props(atomable(), binable(), binable(),
+                         binable(), binable(), binable(),
+                         non_neg_integer(), erlang:timestamp())
+    -> [{'app_id', binary()} |
+        {'dist', binary()} |
+        {'service', atom()} |
+        {'device_id', binary()} |
+        {'tag', binary()} |
+        {'modified', tuple()} |
+        {'version', non_neg_integer()} |
+        {'token', binary()}].
+
+make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist, Vsn, Mod) ->
+    [
+        {device_id, sc_util:to_bin(DeviceId)},
+        {service, sc_util:to_atom(Service)},
+        {token, sc_util:to_bin(Token)},
+        {tag, sc_util:to_bin(Tag)},
+        {app_id, sc_util:to_bin(AppId)},
+        {dist, sc_util:to_bin(Dist)},
+        {version, Vsn},
+        {modified, Mod}
+    ].
+
+%% @doc Convert to an opaque service-token key.
+-spec make_svc_tok(atom_or_str(), binable()) -> svc_tok_key().
+make_svc_tok(Service, Token) when is_atom(Service) ->
+    {Service, sc_util:to_bin(Token)};
+make_svc_tok(Service, Token) when is_list(Service) ->
+    make_svc_tok(list_to_atom(Service), Token).
+
+%% @doc Save a list of push registrations.
+-spec save_push_regs([sc_types:reg_proplist(), ...]) -> ok | {error, term()}.
+save_push_regs(ListOfProplists) ->
+    Regs = [make_sc_pshrg(PL) || PL <- ListOfProplists],
+    do_txn(save_push_regs_txn(), [Regs]).
+
+%% @doc Re-register invalidated tokens
+-spec reregister_ids([{reg_id_key(), binary()}]) -> ok.
+reregister_ids(IDToks) when is_list(IDToks) ->
+    do_txn(reregister_ids_txn(), [IDToks]).
+
+%%====================================================================
+%% Internal functions
+%%====================================================================
+make_sc_pshrg([_|_] = Props)  ->
+    ServiceS = sc_util:to_list(sc_util:val(service, Props, "apns")),
+    Service = sc_util:to_atom(sc_util:req_s(ServiceS)),
+    Token = sc_util:req_val(token, Props),
+    DeviceId = sc_util:req_val(device_id, Props),
+    Tag = sc_util:val(tag, Props, ""),
+    AppId = sc_util:req_val(app_id, Props),
+    Dist = sc_util:val(dist, Props, ""),
+    make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist).
+
+-spec make_sc_pshrg(atom_or_str(), binable(), binable(),
+                    binable(), binable(), binable()) -> #sc_pshrg{}.
+make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist) ->
+    make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist, 0,
+                  os:timestamp()).
+
+-spec make_sc_pshrg(atom_or_str(), binable(), binable(),
+                    binable(), binable(), binable(), non_neg_integer(),
+                    erlang:timestamp()) -> #sc_pshrg{}.
+make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist, Version, Modified) ->
+    #sc_pshrg{
+        id = make_id(DeviceId, Tag),
+        device_id = DeviceId,
+        tag = sc_util:to_bin(Tag),
+        svc_tok = make_svc_tok(Service, Token),
+        app_id = sc_util:to_bin(AppId),
+        dist = sc_util:to_bin(Dist),
+        version = Version,
+        modified = Modified
+    }.
+
+sc_pshrg_to_props(#sc_pshrg{svc_tok = SvcToken,
+                            tag = Tag,
+                            device_id = DeviceID,
+                            app_id = AppId,
+                            dist = Dist,
+                            version = Vsn,
+                            modified = Modified}) ->
+    {Service, Token} = SvcToken,
+    make_sc_push_props(Service, Token, DeviceID, Tag,
+                       AppId, Dist, Vsn, Modified).
+
+%%--------------------------------------------------------------------
+%% Database functions
+%%--------------------------------------------------------------------
 create_table(Tab, Attrs) ->
     Res = mnesia:create_table(Tab, Attrs),
     
@@ -219,10 +281,12 @@ upgrade_sc_pshrg() ->
     case mnesia:table_info(sc_pshrg, attributes) of
         [id, tag, app_id, dist, last_updated] -> % Old format
             ok = mnesia:wait_for_tables([sc_pshrg], 30000),
-            Now = os:timestamp(),
-            NullDeviceId = <<>>,
-            Xform = fun({sc_pshrg, Id, Tag, AppId, Dist, _LastUpdated}) ->
-                    {sc_pshrg, Id, fix_tag(Tag), AppId, Dist, Now, NullDeviceId}
+            Vers = 1, % Record version
+            ModTs = os:timestamp(),
+            % Token is used as default ID when converting from old-style records
+            Xform = fun({sc_pshrg, {Svc, Tok}, Tag, AppId, Dist, _Time}) ->
+                    DeviceID = Tok,
+                    make_sc_pshrg(Svc, Tok, DeviceID, fix_tag(Tag), AppId, Dist, Vers, ModTs)
             end,
 
             % Transform table (will transform all replicas of the table
@@ -231,7 +295,7 @@ upgrade_sc_pshrg() ->
             NewAttrs = record_info(fields, sc_pshrg),
             delete_all_table_indexes(sc_pshrg),
             {atomic, ok} = mnesia:transform_table(sc_pshrg, Xform, NewAttrs),
-            add_table_indexes(sc_pshrg, [tag, device_id]),
+            add_table_indexes(sc_pshrg, [device_id, tag, svc_tok]),
             ok;
         _ -> % Leave alone
             ok
@@ -258,46 +322,27 @@ add_table_indexes(Tab, Attrs) ->
         end || Attr <- Attrs
     ].
 
--spec all_reg() -> push_reg_list().
-all_reg() ->
-    mnesia:dirty_select(sc_pshrg, ets:fun2ms(fun(R) -> R end)).
-
 -spec lookup_reg_id(reg_id_key()) -> push_reg_list().
 lookup_reg_id(ID) ->
-    mnesia:dirty_read(sc_pshrg, ID).
+    do_txn(fun() -> mnesia:read(sc_pshrg, ID) end).
 
--spec lookup_device_id(binary()) -> push_reg_list().
-lookup_device_id(ID) ->
-    mnesia:dirty_index_read(sc_pshrg, ID, #sc_pshrg.device_id).
+-spec lookup_reg_device_id(binary()) -> push_reg_list().
+lookup_reg_device_id(DeviceID) when is_binary(DeviceID) ->
+    do_txn(fun() ->
+                mnesia:index_read(sc_pshrg, DeviceID, #sc_pshrg.device_id)
+        end).
 
 -spec lookup_reg_tag(binary()) -> push_reg_list().
 lookup_reg_tag(Tag) when is_binary(Tag) ->
-    mnesia:dirty_index_read(sc_pshrg, Tag, #sc_pshrg.tag).
+    do_txn(fun() ->
+                mnesia:index_read(sc_pshrg, Tag, #sc_pshrg.tag)
+        end).
 
--spec save_push_regs([sc_types:reg_proplist(), ...]) -> ok | {error, term()}.
-save_push_regs(ListOfProplists) ->
-    Regs = [make_sc_pshrg(PL) || PL <- ListOfProplists],
-    do_txn(save_push_regs_txn(), [Regs]).
-
--spec delete_push_regs(reg_id_keys()) -> ok | {error, term()}.
-delete_push_regs(IDs) ->
-    do_txn(delete_push_regs_txn(), [IDs]).
-
--spec delete_push_regs_by_device_id([binary()]) -> ok | {error, term()}.
-delete_push_regs_by_device_id(DevIDs) ->
-    do_txn(delete_push_regs_by_device_id_txn(), [DevIDs]).
-
--spec delete_push_regs_by_tag(binary()) -> ok | {error, term()}.
-delete_push_regs_by_tag(Tag) ->
-    do_txn(delete_push_regs_by_tag_txn(), [Tag]).
-
--spec reregister_id(reg_id_key(), binary()) -> ok.
-reregister_id(OldId, NewToken) ->
-    do_txn(reregister_id_txn(), [OldId, NewToken]).
-
--spec reregister_by_device_id(binary(), binary()) -> ok.
-reregister_by_device_id(DeviceId, NewToken) ->
-    do_txn(reregister_by_device_id_txn(), [DeviceId, NewToken]).
+-spec lookup_svc_tok(svc_tok_key()) -> push_reg_list().
+lookup_svc_tok({Service, Token} = SvcTok) when is_atom(Service), is_binary(Token) ->
+    do_txn(fun() ->
+                mnesia:index_read(sc_pshrg, SvcTok, #sc_pshrg.svc_tok)
+        end).
 
 -spec save_push_regs_txn() -> fun((push_reg_list()) -> ok).
 save_push_regs_txn() ->
@@ -306,98 +351,93 @@ save_push_regs_txn() ->
             ok
     end.
 
--spec delete_push_regs_txn() -> fun((push_reg_list()) -> ok).
+-spec delete_push_regs_txn() -> fun(([binary()]) -> ok).
 delete_push_regs_txn() ->
     fun(IDs) ->
             [mnesia:delete({sc_pshrg, ID}) || ID <- IDs],
             ok
     end.
 
+-spec delete_push_regs_by_tag_txn() -> fun(([binary()]) -> ok).
+delete_push_regs_by_tag_txn() ->
+    delete_push_regs_by_index_txn(#sc_pshrg.tag).
+
 -spec delete_push_regs_by_device_id_txn() -> fun(([binary()]) -> ok).
 delete_push_regs_by_device_id_txn() ->
-    % There must be at most one device ID per token, otherwise crash
-    fun(DevIDs) ->
-            [
-                case mnesia:index_read(sc_pshrg, DevID, #sc_pshrg.device_id) of
-                    [R] ->
-                        mnesia:delete({sc_pshrg, R#sc_pshrg.id});
-                    [] ->
-                        ok
-                end || DevID <- DevIDs, DevID =/= <<>>
-            ],
+    delete_push_regs_by_index_txn(#sc_pshrg.device_id).
+
+-spec delete_push_regs_by_svc_tok_txn() -> fun(([svc_tok_key()]) -> ok).
+delete_push_regs_by_svc_tok_txn() ->
+    delete_push_regs_by_index_txn(#sc_pshrg.svc_tok).
+
+-spec delete_push_regs_by_index_txn(non_neg_integer()) -> fun(([term()]) -> ok).
+delete_push_regs_by_index_txn(Index) ->
+    fun(Keys) ->
+            [delete_push_reg_by_index(Key, Index) || Key <- Keys],
             ok
     end.
 
--spec delete_push_regs_by_tag_txn() -> fun((binary()) -> ok).
-delete_push_regs_by_tag_txn() ->
-    fun(Tag) ->
-            case mnesia:index_read(sc_pshrg, Tag, #sc_pshrg.tag) of
-                [] ->
-                    ok;
-                Recs ->
-                    [mnesia:delete({sc_pshrg, R#sc_pshrg.id}) || R <- Recs]
-            end,
+%% MUST be called in txn
+-spec delete_push_reg_by_index(term(), non_neg_integer()) -> ok.
+delete_push_reg_by_index(Key, Index) ->
+    case mnesia:index_read(sc_pshrg, Key, Index) of
+        [] ->
+            ok;
+        Recs ->
+            [mnesia:delete({sc_pshrg, R#sc_pshrg.id}) || R <- Recs]
+    end,
+    ok.
+
+-spec reregister_ids_txn() -> fun(([{reg_id_key(), binary()}]) -> ok).
+reregister_ids_txn() ->
+    fun(IDToks) ->
+            [reregister_one_id(ID, NewTok) || {ID, NewTok} <- IDToks],
             ok
     end.
 
--spec reregister_id_txn() -> fun((reg_id_key(), binary()) -> ok).
-reregister_id_txn() ->
-    fun(OldId, NewToken) ->
-            case mnesia:read(sc_pshrg, OldId) of
-                [#sc_pshrg{id = {Svc, _Tok} = Key} = R] ->
-                    ok = mnesia:delete({sc_pshrg, Key}), 
-                    ok = write_rec(R#sc_pshrg{id = make_id(Svc, NewToken)});
-                [] -> % Does not exist, so that's fine
-                    ok
-            end
+%% MUST be called in a transaction
+reregister_one_id(ID, NewTok) ->
+    case mnesia:read(sc_pshrg, ID) of
+        [#sc_pshrg{svc_tok = {Svc, _Tok}} = R] ->
+            R1 = R#sc_pshrg{svc_tok = make_svc_tok(Svc, NewTok)},
+            write_rec(R1);
+        [] -> % Does not exist, so that's fine
+            ok
     end.
 
 %% MUST be called in a transaction.
-%%
-%% Allow duplicate device IDs that are empty binary, because this is the
-%% default for old records before device IDs were added.
-%%
-%% Fail if there is already an equal device ID for a different
-%% {service, token} primary key.
-%% 
-%% If the device ID and the key are both the same, or there is no equal device
-%% ID, allow the record to be overwritten.
-write_rec(#sc_pshrg{device_id = DevID} = R) ->
-    mnesia:write(R),
-    case DevID of
-        <<>> ->
-            ok;
-        _ ->
-            assert_unique_dev_id(R)
-    end.
+-compile({inline, [{write_rec, 1}]}).
+write_rec(#sc_pshrg{} = R) ->
+    ok = mnesia:write(inc(R)).
 
-assert_unique_dev_id(#sc_pshrg{device_id = DevID} = R) ->
-    case mnesia:index_read(sc_pshrg, DevID, #sc_pshrg.device_id) of
-        [R] ->
-            ok;
-        [_|_] ->
-            mnesia:abort({dup_device_id, DevID})
-    end.
+-compile({inline, [{inc, 1}]}).
+inc(#sc_pshrg{version = V} = R) ->
+    R#sc_pshrg{modified = os:timestamp(), version = V + 1}.
 
--spec reregister_by_device_id_txn() -> fun((binary(), binary()) -> ok).
-reregister_by_device_id_txn() ->
-    fun(DevID, NewToken) when DevID =/= <<>> ->
-            case mnesia:index_read(sc_pshrg, DevID, #sc_pshrg.device_id) of
-                [#sc_pshrg{id = {Svc, _Tok} = Key} = R] ->
-                    ok = mnesia:delete({sc_pshrg, Key}), 
-                    ok = write_rec(R#sc_pshrg{id = make_id(Svc, NewToken)});
-                [] -> % Does not exist, so nothing to do
-                    ok
-            end;
-        (DevID, _NewToken) ->
-            mnesia:abort({invalid_dev_id, DevID})
-    end.
-
+%% NOTE: Chose sync_transaction here because cluster may
+%% extend across data centers, and
+%% - If 2nd phase commit fails and
+%% - Network to DC is down, and
+%% - Async transaction is used
+%% Then this transaction may quietly be reversed when connectivity is restored,
+%% even after it's told the caller it succeeded.
+-compile({inline, [{do_txn, 2}]}).
 -spec do_txn(fun(), list()) -> Result::term().
 do_txn(Txn, Args) ->
-    {atomic, Result} = mnesia:transaction(Txn, Args),
+    {atomic, Result} = mnesia:sync_transaction(Txn, Args),
     Result.
 
-dirty_txn(Txn, Args) ->
-    mnesia:async_dirty(Txn, Args).
+-compile({inline, [{do_txn, 1}]}).
+-spec do_txn(fun()) -> Result::term().
+do_txn(Txn) ->
+    do_txn(Txn, []).
+
+%% MUST be in transaction
+get_registration_info_impl(Key, DBLookup) when is_function(DBLookup, 1) ->
+    case DBLookup(Key) of
+        [#sc_pshrg{}|_] = Regs ->
+            [sc_pshrg_to_props(Reg) || Reg <- Regs];
+        [] ->
+            notfound
+    end.
 
