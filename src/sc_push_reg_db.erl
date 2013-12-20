@@ -397,8 +397,8 @@ reregister_ids_txn() ->
 
 %% MUST be called in a transaction
 reregister_one_id(ID, NewTok) ->
-    case mnesia:read(sc_pshrg, ID) of
-        [#sc_pshrg{svc_tok = {Svc, _Tok}} = R] ->
+    case mnesia:read(sc_pshrg, ID, write) of
+        [#sc_pshrg{svc_tok = {Svc, _}} = R] ->
             R1 = R#sc_pshrg{svc_tok = make_svc_tok(Svc, NewTok)},
             write_rec(R1);
         [] -> % Does not exist, so that's fine
