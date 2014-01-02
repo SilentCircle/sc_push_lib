@@ -30,6 +30,21 @@
 -include("sc_push_lib.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
 
+%% FIXME: May want to choose sync_transaction because cluster may
+%% extend across data centers, and
+%% - If 2nd phase commit fails and
+%% - Network to DC is down, and
+%% - Async transaction is used
+%% Then this transaction may quietly be reversed when connectivity is restored,
+%% even after it's told the caller it succeeded.
+%% OTOH, it's much much slower. So we'll leave it as a compile-time option.
+
+-ifdef(SC_MNESIA_SYNC_TRANSACTIONS).
+-define(TXN2(Txn, Args), mnesia:sync_transaction(Txn, Args)).
+-else.
+-define(TXN2(Txn, Args), mnesia:transaction(Txn, Args)).
+-endif.
+
 %%--------------------------------------------------------------------
 %% Types
 %%--------------------------------------------------------------------
@@ -414,17 +429,10 @@ write_rec(#sc_pshrg{} = R) ->
 inc(#sc_pshrg{version = V} = R) ->
     R#sc_pshrg{modified = os:timestamp(), version = V + 1}.
 
-%% NOTE: Chose sync_transaction here because cluster may
-%% extend across data centers, and
-%% - If 2nd phase commit fails and
-%% - Network to DC is down, and
-%% - Async transaction is used
-%% Then this transaction may quietly be reversed when connectivity is restored,
-%% even after it's told the caller it succeeded.
 -compile({inline, [{do_txn, 2}]}).
 -spec do_txn(fun(), list()) -> Result::term().
 do_txn(Txn, Args) ->
-    {atomic, Result} = mnesia:sync_transaction(Txn, Args),
+    {atomic, Result} = ?TXN2(Txn, Args),
     Result.
 
 -compile({inline, [{do_txn, 1}]}).
