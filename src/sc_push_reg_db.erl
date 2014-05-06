@@ -19,6 +19,7 @@
         make_sc_push_props/8,
         make_svc_tok/2,
         reregister_ids/1,
+        reregister_svc_toks/1,
         save_push_regs/1
     ]).
 
@@ -231,6 +232,11 @@ save_push_regs(ListOfProplists) ->
 reregister_ids(IDToks) when is_list(IDToks) ->
     do_txn(reregister_ids_txn(), [IDToks]).
 
+%% @doc Re-register invalidated tokens by svc_tok
+-spec reregister_svc_toks([{svc_tok_key(), binary()}]) -> ok.
+reregister_svc_toks(SvcToks) when is_list(SvcToks) ->
+    do_txn(reregister_svc_toks_txn(), [SvcToks]).
+
 %%====================================================================
 %% Internal functions
 %%====================================================================
@@ -420,10 +426,44 @@ reregister_one_id(ID, NewTok) ->
             ok
     end.
 
+-spec reregister_svc_toks_txn() -> fun(([{svc_tok_key(), binary()}]) -> ok).
+reregister_svc_toks_txn() ->
+    fun(SvcToks) ->
+            [reregister_one_svc_tok(SvcTok, NewTok) || {SvcTok, NewTok} <- SvcToks],
+            ok
+    end.
+
+%% MUST be called in a transaction
+%% Legacy records: if token == device_id, change device_id as well.
+reregister_one_svc_tok(OldSvcTok, NewTok) ->
+    case mnesia:index_read(sc_pshrg, OldSvcTok, #sc_pshrg.svc_tok) of
+        [#sc_pshrg{svc_tok = {Svc, OldTok}} = R0] ->
+            NewSvcTok = make_svc_tok(Svc, NewTok),
+            % If old token same as old device ID, change device ID too
+            % for legacy records
+            R1 = case R0#sc_pshrg.id of
+                {OldDeviceId, OldTag} when OldDeviceId =:= OldTok ->
+                    delete_rec(R0), % Delete old rec
+                    R0#sc_pshrg{id = make_id(NewTok, OldTag),
+                                device_id = NewTok,
+                                svc_tok = NewSvcTok};
+                _ ->
+                    R0#sc_pshrg{svc_tok = NewSvcTok}
+            end,
+            write_rec(R1); % Upsert rec
+        [] -> % Does not exist, so that's fine
+            ok
+    end.
+
 %% MUST be called in a transaction.
 -compile({inline, [{write_rec, 1}]}).
 write_rec(#sc_pshrg{} = R) ->
     ok = mnesia:write(inc(R)).
+
+%% MUST be called in a transaction.
+-compile({inline, [{delete_rec, 1}]}).
+delete_rec(#sc_pshrg{} = R) ->
+    ok = mnesia:delete_object(R).
 
 -compile({inline, [{inc, 1}]}).
 inc(#sc_pshrg{version = V} = R) ->

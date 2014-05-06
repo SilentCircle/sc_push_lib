@@ -5,6 +5,7 @@
     register_id/1,
     register_ids/1,
     reregister_id/2,
+    reregister_svc_tok/2,
     deregister_id/1,
     deregister_ids/1,
     deregister_tag/1,
@@ -56,6 +57,12 @@ all_registration_info() ->
 -spec reregister_id(sc_push_reg_db:reg_id_key(), binary()) -> ok.
 reregister_id(OldId, <<NewToken/binary>>) ->
     sc_push_reg_db:reregister_ids([{OldId, NewToken}]).
+
+%% @doc Reregister a previously-registered identity, substituting a new token
+%% for the specified push service and removing .
+-spec reregister_svc_tok(sc_push_reg_db:svc_tok_key(), binary()) -> ok.
+reregister_svc_tok(OldSvcTok, <<NewToken/binary>>) ->
+    sc_push_reg_db:reregister_svc_toks([{OldSvcTok, NewToken}]).
 
 %% @doc Register an identity for receiving push notifications
 %% from a supported push service.
