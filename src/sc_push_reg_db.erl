@@ -429,31 +429,36 @@ reregister_one_id(ID, NewTok) ->
 -spec reregister_svc_toks_txn() -> fun(([{svc_tok_key(), binary()}]) -> ok).
 reregister_svc_toks_txn() ->
     fun(SvcToks) ->
-            [reregister_one_svc_tok(SvcTok, NewTok) || {SvcTok, NewTok} <- SvcToks],
+            [reregister_svc_toks(SvcTok, NewTok) || {SvcTok, NewTok} <- SvcToks],
             ok
     end.
 
 %% MUST be called in a transaction
 %% Legacy records: if token == device_id, change device_id as well.
-reregister_one_svc_tok(OldSvcTok, NewTok) ->
+reregister_svc_toks(OldSvcTok, NewTok) ->
     case mnesia:index_read(sc_pshrg, OldSvcTok, #sc_pshrg.svc_tok) of
-        [#sc_pshrg{svc_tok = {Svc, OldTok}} = R0] ->
-            NewSvcTok = make_svc_tok(Svc, NewTok),
-            % If old token same as old device ID, change device ID too
-            % for legacy records
-            R1 = case R0#sc_pshrg.id of
-                {OldDeviceId, OldTag} when OldDeviceId =:= OldTok ->
-                    delete_rec(R0), % Delete old rec
-                    R0#sc_pshrg{id = make_id(NewTok, OldTag),
-                                device_id = NewTok,
-                                svc_tok = NewSvcTok};
-                _ ->
-                    R0#sc_pshrg{svc_tok = NewSvcTok}
-            end,
-            write_rec(R1); % Upsert rec
         [] -> % Does not exist, so that's fine
+            ok;
+        [_|_] = Rs ->
+            [ok = reregister_one_svc_tok(NewTok, R) || R <- Rs],
             ok
     end.
+
+%% MUST be called in a transaction
+reregister_one_svc_tok(NewTok, #sc_pshrg{svc_tok = {Svc, OldTok}} = R0) ->
+    NewSvcTok = make_svc_tok(Svc, NewTok),
+    % If old token same as old device ID, change device ID too
+    % for legacy records
+    R1 = case R0#sc_pshrg.id of
+        {OldDeviceId, OldTag} when OldDeviceId =:= OldTok ->
+            delete_rec(R0), % Delete old rec
+            R0#sc_pshrg{id = make_id(NewTok, OldTag),
+                        device_id = NewTok,
+                        svc_tok = NewSvcTok};
+        _ ->
+            R0#sc_pshrg{svc_tok = NewSvcTok}
+    end,
+    write_rec(R1).
 
 %% MUST be called in a transaction.
 -compile({inline, [{write_rec, 1}]}).
