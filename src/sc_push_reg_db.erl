@@ -83,7 +83,7 @@
 all_registration_info() ->
     [sc_pshrg_to_props(R) || R <- all_reg()].
 
-%% @doc Return a list of all pus registraion records.
+%% @doc Return a list of all push registration records.
 %% @deprecated For debug only.
 -spec all_reg() -> push_reg_list().
 all_reg() ->
@@ -108,7 +108,7 @@ check_ids(IDs) when is_list(IDs) ->
 
 create_tables(Nodes) ->
     Defs = [
-        {sc_pshrg, 
+        {sc_pshrg,
             [
                 {disc_copies, Nodes},
                 {type, set},
@@ -287,7 +287,7 @@ sc_pshrg_to_props(#sc_pshrg{svc_tok = SvcToken,
 %%--------------------------------------------------------------------
 create_table(Tab, Attrs) ->
     Res = mnesia:create_table(Tab, Attrs),
-    
+
     case Res of
         {atomic, ok} -> ok;
         {aborted, {already_exists, _}} -> ok;
