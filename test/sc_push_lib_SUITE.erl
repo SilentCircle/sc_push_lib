@@ -17,21 +17,25 @@
          end_per_testcase/2]).
 
 -export([
-    make_id_test/1,
-    make_push_props_test/1,
-    is_valid_push_reg_test/1,
-    register_id_test/1,
-    reregister_id_test/1,
-    register_ids_test/1,
-    register_ids_bad_id_test/1,
-    deregister_ids_bad_id_test/1,
-    all_registration_info_test/1,
-    get_registration_info_test/1,
-    get_registration_info_by_id_test/1,
-    get_registration_info_not_found_test/1,
-    get_registration_info_by_id_not_found_test/1,
-    reqmgr_test/1,
-    sc_config_test/1
+        make_id_test/1,
+        make_svc_tok_test/1,
+        make_push_props_test/1,
+        is_valid_push_reg_test/1,
+        register_id_test/1,
+        reregister_id_test/1,
+        register_ids_test/1,
+        register_ids_bad_id_test/1,
+        deregister_ids_bad_id_test/1,
+        all_registration_info_test/1,
+        get_registration_info_test/1,
+        get_registration_info_by_id_test/1,
+        get_registration_info_by_device_id_test/1,
+        get_registration_info_by_tag_test/1,
+        get_registration_info_by_svc_tok_test/1,
+        get_registration_info_not_found_test/1,
+        get_registration_info_by_id_not_found_test/1,
+        reqmgr_test/1,
+        sc_config_test/1
     ]).
 
 -define(assertMsg(Cond, Fmt, Args),
@@ -106,10 +110,6 @@ suite() -> [
 %% variable, but should NOT alter/remove any existing entries.
 %%--------------------------------------------------------------------
 init_per_suite(Config) ->
-    ok = application:start(sasl),
-    ok = application:load(lager),
-    [ok = application:set_env(lager, K, V) || {K, V} <- lager_config(Config)],
-    ok = application:start(lager),
     Registration = ct:get_config(registration),
     ct:pal("Registration: ~p~n", [Registration]),
     [{registration, Registration} | Config].
@@ -123,10 +123,6 @@ init_per_suite(Config) ->
 %% Description: Cleanup after the suite.
 %%--------------------------------------------------------------------
 end_per_suite(_Config) ->
-    ok = application:stop(lager),
-    ok = application:unload(lager),
-    code:purge(lager_console_backend), % ct gives error otherwise
-    ok = application:stop(sasl),
     ok.
 
 %%--------------------------------------------------------------------
@@ -176,6 +172,13 @@ end_per_group(_GroupName, _Config) ->
 %% variable, but should NOT alter/remove any existing entries.
 %%--------------------------------------------------------------------
 init_per_testcase(_Case, Config) ->
+    ok = application:start(sasl),
+    ok = application:load(lager),
+    [ok = application:set_env(lager, K, V) || {K, V} <- lager_config(Config)],
+    ok = application:start(compiler),
+    ok = application:start(syntax_tools),
+    ok = application:start(goldrush),
+    ok = application:start(lager),
     init_per_testcase_common(Config).
 
 %%--------------------------------------------------------------------
@@ -192,7 +195,15 @@ init_per_testcase(_Case, Config) ->
 %% Description: Cleanup after each test case.
 %%--------------------------------------------------------------------
 end_per_testcase(_Case, Config) ->
-    end_per_testcase_common(Config).
+    Ret = end_per_testcase_common(Config),
+    ok = application:stop(lager),
+    ok = application:stop(goldrush),
+    ok = application:stop(syntax_tools),
+    ok = application:stop(compiler),
+    ok = application:unload(lager),
+    code:purge(lager_console_backend), % ct gives error otherwise
+    ok = application:stop(sasl),
+    Ret.
 
 %%--------------------------------------------------------------------
 %% Function: groups() -> [Group]
@@ -222,6 +233,7 @@ groups() ->
             [],
             [
                 make_id_test,
+                make_svc_tok_test,
                 make_push_props_test,
                 is_valid_push_reg_test,
                 register_id_test,
@@ -232,6 +244,9 @@ groups() ->
                 get_registration_info_test,
                 all_registration_info_test,
                 get_registration_info_by_id_test,
+                get_registration_info_by_device_id_test,
+                get_registration_info_by_tag_test,
+                get_registration_info_by_svc_tok_test,
                 get_registration_info_by_id_not_found_test,
                 get_registration_info_not_found_test
             ]
@@ -286,16 +301,26 @@ all() ->
 %% GROUP:registration
 %%--------------------------------------------------------------------
 make_id_test(doc) ->
-    ["sc_push_reg_api:make_id/1 should create a canonical registration ID"];
+    ["sc_push_reg_api:make_id/2 should create a canonical registration ID"];
 make_id_test(suite) ->
     [];
 make_id_test(_Config) ->
+    {DeviceID, Tag} = ExpectedID = {<<"abcdef">>, <<"12345678">>},
+    ExpectedID = sc_push_reg_api:make_id(DeviceID, Tag),
+    ExpectedID = {DeviceID, Tag},
+    ok.
+
+make_svc_tok_test(doc) ->
+    ["sc_push_reg_api:make_svc_tok/2 should create a canonical registration svc_tok"];
+make_svc_tok_test(suite) ->
+    [];
+make_svc_tok_test(_Config) ->
     ExpSvc = 'apns',
     ExpToken = <<"abcdef">>,
     ExpectedID = {ExpSvc, ExpToken},
-    ExpectedID = sc_push_reg_api:make_id(ExpSvc, ExpToken),
-    ExpectedID = sc_push_reg_api:make_id(atom_to_list(ExpSvc), ExpToken),
-    ExpectedID = sc_push_reg_api:make_id(atom_to_list(ExpSvc), binary_to_list(ExpToken)),
+    ExpectedID = sc_push_reg_api:make_svc_tok(ExpSvc, ExpToken),
+    ExpectedID = sc_push_reg_api:make_svc_tok(atom_to_list(ExpSvc), ExpToken),
+    ExpectedID = sc_push_reg_api:make_svc_tok(atom_to_list(ExpSvc), binary_to_list(ExpToken)),
     ok.
 
 is_valid_push_reg_test(doc) ->
@@ -308,9 +333,10 @@ is_valid_push_reg_test(Config) ->
     Tag = <<"my_tag">>,
     AppId = <<"my_app_id">>,
     Dist = <<"prod">>,
+    DeviceId = <<"test_device_id">>,
 
-    GoodProps = sc_push_reg_api:make_sc_push_props(Service, Token, Tag,
-                                                   AppId, Dist),
+    GoodProps = sc_push_reg_db:make_sc_push_props(Service, Token, DeviceId, Tag,
+                                                  AppId, Dist, 1, os:timestamp()),
 
     true = sc_push_reg_api:is_valid_push_reg(GoodProps),
 
@@ -320,7 +346,7 @@ is_valid_push_reg_test(Config) ->
     Config.
 
 make_push_props_test(doc) ->
-    ["Test sc_push_reg_api:make_sc_push_props/5"];
+    ["Test sc_push_reg_db:make_sc_push_props/8"];
 make_push_props_test(suite) ->
     [];
 make_push_props_test(Config) ->
@@ -329,26 +355,38 @@ make_push_props_test(Config) ->
     Tag = <<"my_tag">>,
     AppId = <<"my_app_id">>,
     Dist = <<"prod">>,
+    DeviceId = <<"test_device_id">>,
+    Version = 1,
+    Modified = os:timestamp(),
 
-    Props = sc_push_reg_api:make_sc_push_props(Service, Token, Tag,
-                                               AppId, Dist),
+    Props = sc_push_reg_db:make_sc_push_props(Service, Token, DeviceId, Tag,
+                                              AppId, Dist, Version, Modified),
     Service = value(service, Props),
     Token = value(token, Props),
     Tag = value(tag, Props),
     AppId = value(app_id, Props),
     Dist = value(dist, Props),
+    DeviceId = value(device_id, Props),
+    Version = value(version, Props),
+    Modified = value(modified, Props),
 
-    %% Check that it will work from strings, too
-    Props1 = sc_push_reg_api:make_sc_push_props(atom_to_list(Service),
-                                                binary_to_list(Token),
-                                                binary_to_list(Tag),
-                                                binary_to_list(AppId),
-                                                binary_to_list(Dist)),
+    %% Check that it will work from strings, too (except version and modified)
+    Props1 = sc_push_reg_db:make_sc_push_props(atom_to_list(Service),
+                                               binary_to_list(Token),
+                                               binary_to_list(DeviceId),
+                                               binary_to_list(Tag),
+                                               binary_to_list(AppId),
+                                               binary_to_list(Dist),
+                                               Version, Modified
+                                           ),
     Service = value(service, Props1),
     Token = value(token, Props1),
     Tag = value(tag, Props1),
     AppId = value(app_id, Props1),
     Dist = value(dist, Props1),
+    DeviceId = value(device_id, Props1),
+    Version = value(version, Props1),
+    Modified = value(modified, Props1),
 
     Config.
 
@@ -358,12 +396,14 @@ register_id_test(suite) ->
     [];
 register_id_test(Config) ->
     RegPL = value(registration, Config),
-    ok = sc_push_reg_api:register_id(RegPL),
+    Result = sc_push_reg_api:register_id(RegPL),
+    ct:pal("register_id returned ~p~n", [Result]),
+    ok = Result,
     ct:pal("Registered ~p~n", [RegPL]),
     deregister_id(RegPL).
 
 reregister_id_test(doc) ->
-    ["sc_push_reg_api:reregister_id/2 should reregister an existing reg with a new ID"];
+    ["sc_push_reg_api:reregister_id/2 should reregister an existing reg with a new token"];
 reregister_id_test(suite) ->
     [];
 reregister_id_test(Config) ->
@@ -371,22 +411,25 @@ reregister_id_test(Config) ->
     ok = sc_push_reg_api:register_id(RegPL),
     ct:pal("Registered ~p~n", [RegPL]),
 
-    OldService = value(service, RegPL),
-    OldTok = value(token, RegPL),
-    OldId = sc_push_reg_api:make_id(OldService, OldTok),
-    NewTok = <<"thisisanewtoken">>,
-    ok = sc_push_reg_api:reregister_id(OldId, NewTok),
-
+    ID = value(device_id, RegPL),
     Tag = value(tag, RegPL),
-    ListOfRegPL = sc_push_reg_api:get_registration_info(Tag),
+
+    OldID = sc_push_reg_api:make_id(ID, Tag),
+    NewTok = <<"thisisanewtoken">>,
+    ok = sc_push_reg_api:reregister_id(OldID, NewTok),
+
+    ListOfRegPL = sc_push_reg_api:get_registration_info_by_id(OldID),
     [[{_,_}|_] = NewRegPL] = ListOfRegPL,
 
-    % Does this have the tag?
-    NewTag = value(tag, NewRegPL),
-    % Does this have the *right* tag?
-    NewTag = sc_util:to_bin(Tag),
+    % Does this have the ID?
+    NewID = sc_push_reg_api:make_id(value(device_id, NewRegPL),
+                                    value(tag, NewRegPL)),
+    % Does this have the *right* ID?
+    NewID = OldID,
     % Does this have the right service and token?
+    OldService = value(service, RegPL),
     OldService = value(service, NewRegPL),
+    
     NewTok = value(token, NewRegPL),
 
     deregister_id(RegPL),
@@ -422,8 +465,7 @@ deregister_ids_bad_id_test(suite) ->
     [];
 deregister_ids_bad_id_test(Config) ->
     ?assertThrow(sc_push_reg_api:deregister_ids(totally_invalid_input), error, function_clause),
-    {error, {bad_reg_id, _}} = sc_push_reg_api:deregister_ids([totally_invalid_input]),
-    {error, _} = sc_push_reg_api:deregister_ids([{<<1,2,3>>, <<4,5,6>>}]),
+    ?assertThrow(sc_push_reg_api:deregister_ids([totally_invalid_input]), error, function_clause),
 
     ct:pal("deregister_ids correctly identified bad input~n", []),
     Config.
@@ -449,6 +491,7 @@ get_registration_info_test(Config) ->
     ok = sc_push_reg_api:register_id(RegPL),
     Tag = value(tag, RegPL),
     ListOfRegPL = sc_push_reg_api:get_registration_info(Tag),
+    true = is_list(ListOfRegPL),
     % Does this look like a list of one non-empty proplist?
     [[{_,_}|_] = NewRegPL] = ListOfRegPL,
     % Does this have the tag?
@@ -460,17 +503,15 @@ get_registration_info_test(Config) ->
     ct:pal("Got reginfo for tag ~p:~n~p", [NewTag, NewRegPL]),
     deregister_id(RegPL).
 
-get_registration_info_by_id_test(doc) ->
-    ["sc_push_reg_api:get_registration_info_by_id_by_id/1 should get the correct reg info for a single reg ID"];
-get_registration_info_by_id_test(suite) ->
+get_registration_info_by_tag_test(doc) ->
+    ["sc_push_reg_api:get_registration_info_by_tag/1 should get the correct reg info for a reg tag"];
+get_registration_info_by_tag_test(suite) ->
     [];
-get_registration_info_by_id_test(Config) ->
+get_registration_info_by_tag_test(Config) ->
     RegPL = value(registration, Config),
     ok = sc_push_reg_api:register_id(RegPL),
-    Service = value(service, RegPL),
-    Token = value(token, RegPL),
-    ID = sc_push_reg_api:make_id(Service, Token),
-    NewRegPL = sc_push_reg_api:get_registration_info_by_id(ID),
+    Tag = value(tag, RegPL),
+    [NewRegPL] = sc_push_reg_api:get_registration_info_by_tag(Tag),
     % Does this have tag?
     NewTag = value(tag, NewRegPL),
     % Does this have the *right* tag?
@@ -481,6 +522,79 @@ get_registration_info_by_id_test(Config) ->
 
     ct:pal("Got reginfo for ID ~p:~n~p", [NewTag, NewRegPL]),
     deregister_id(RegPL).
+
+get_registration_info_by_svc_tok_test(doc) ->
+    ["sc_push_reg_api:get_registration_info_by_svc_tok/1 should get the correct reg info for service+token"];
+get_registration_info_by_svc_tok_test(suite) ->
+    [];
+get_registration_info_by_svc_tok_test(Config) ->
+    RegPL = value(registration, Config),
+    ok = sc_push_reg_api:register_id(RegPL),
+    Svc = value(service, RegPL),
+    Tok = value(token, RegPL),
+    
+    [NewRegPL] = sc_push_reg_api:get_registration_info_by_svc_tok(Svc, Tok),
+    
+    NewSvc = value(service, NewRegPL),
+    NewTok = value(token, NewRegPL),
+
+    {NewSvc, NewTok} = {Svc, Tok},
+
+    ct:pal("Got reginfo for svc/tok ~p/~p:~n~p", [NewSvc, NewTok, NewRegPL]),
+    deregister_id(RegPL).
+
+get_registration_info_by_id_test(doc) ->
+    ["sc_push_reg_api:get_registration_info_by_id/1 should get the correct reg info for a single device ID"];
+get_registration_info_by_id_test(suite) ->
+    [];
+get_registration_info_by_id_test(Config) ->
+    RegPL = value(registration, Config),
+    ok = sc_push_reg_api:register_id(RegPL),
+    ID = sc_push_reg_api:make_id(value(device_id, RegPL),
+                                 value(tag, RegPL)),
+    [NewRegPL] = sc_push_reg_api:get_registration_info_by_id(ID),
+    % Does this have ID values?
+    NewID = sc_push_reg_api:make_id(value(device_id, NewRegPL),
+                                    value(tag, NewRegPL)),
+    % Does this have the *right* id?
+    NewID = ID,
+
+    ct:pal("Got reginfo for ID ~p:~n~p", [NewID, NewRegPL]),
+    deregister_id(RegPL).
+
+get_registration_info_by_device_id_test(doc) ->
+    ["sc_push_reg_api:get_registration_info_by_device_id/1 should"
+     "get the correct reg info for a single device ID"];
+get_registration_info_by_device_id_test(suite) ->
+    [];
+get_registration_info_by_device_id_test(Config) ->
+    RegPL1 = value(registration, Config),
+    ok = sc_push_reg_api:register_id(RegPL1),
+    NewTag = <<"my second tag">>,
+    NewDeviceID = <<"my second device id">>,
+    RegPL2 = lists:foldl(fun({K, _} = KV, Acc) ->
+                            lists:keyreplace(K, 1, Acc, KV)
+                         end, RegPL1, [{device_id, NewDeviceID},
+                                       {tag, NewTag}]),
+    ok = sc_push_reg_api:register_id(RegPL2),
+
+    DevID1 = sc_util:to_bin(value(device_id, RegPL1)),
+    DevID2 = sc_util:to_bin(value(device_id, RegPL2)),
+
+    [NewRegPL1] = sc_push_reg_api:get_registration_info_by_device_id(DevID1),
+    [NewRegPL2] = sc_push_reg_api:get_registration_info_by_device_id(DevID2),
+    
+    NewDevID1 = value(device_id, NewRegPL1),
+    NewDevID1 = DevID1,
+    NewDevID2 = value(device_id, NewRegPL2),
+    NewDevID2 = DevID2,
+
+    ct:pal("Got reginfo for ID ~p:~n~p", [NewDevID1, NewRegPL1]),
+    ct:pal("Got reginfo for ID ~p:~n~p", [NewDevID2, NewRegPL2]),
+
+    IDs = [DevID1, DevID2],
+    [ok = sc_push_reg_api:deregister_device_id(ID) || ID <- IDs],
+    ct:pal("Deregistered IDs ~p~n", [IDs]).
 
 get_registration_info_not_found_test(doc) ->
     ["sc_push_reg_api:get_registration_info/1 should not find this reg info"];
@@ -497,7 +611,7 @@ get_registration_info_by_id_not_found_test(doc) ->
 get_registration_info_by_id_not_found_test(suite) ->
     [];
 get_registration_info_by_id_not_found_test(Config) ->
-    FakeID = sc_push_reg_api:make_id(bogus_service, <<"Bogus Token">>),
+    FakeID = sc_push_reg_api:make_id(<<"Bogus ID">>, <<"Junk tag">>),
     notfound = sc_push_reg_api:get_registration_info_by_id(FakeID),
     ct:pal("Got expected 'notfound' result for ID ~p~n", [FakeID]),
     Config.
@@ -585,6 +699,7 @@ init_per_testcase_common(Config) ->
     (catch end_per_testcase_common(Config)),
     ok = mnesia:create_schema([node()]),
     ok = mnesia:start(),
+    ok = application:start(unsplit),
     ok = application:start(jsx),
     ok = application:start(sc_util),
     ok = application:start(sc_push_lib),
@@ -594,6 +709,7 @@ end_per_testcase_common(Config) ->
     ok = application:stop(sc_push_lib),
     ok = application:stop(sc_util),
     ok = application:stop(jsx),
+    ok = application:stop(unsplit),
     stopped = mnesia:stop(),
     ok = mnesia:delete_schema([node()]),
     Config.
@@ -609,9 +725,9 @@ deregister_ids(RegPLs) ->
     ct:pal("Deregistered IDs ~p~n", [IDs]).
 
 id_from_reg_props(RegPL) ->
-    Service = value(service, RegPL),
-    Token = value(token, RegPL),
-    sc_push_reg_api:make_id(Service, Token).
+    DeviceID = value(device_id, RegPL),
+    Tag = value(tag, RegPL),
+    sc_push_reg_api:make_id(DeviceID, Tag).
 
 try_bad_gen_server_req(SvrRef) ->
     % Try a bad request
@@ -626,18 +742,34 @@ try_bad_gen_server_req(SvrRef) ->
 %%====================================================================
 lager_config(Config) ->
     PrivDir = value(priv_dir, Config), % Standard CT variable
+    ErrorLog = filename:join(PrivDir, "error.log"),
+    ConsoleLog = filename:join(PrivDir, "console.log"),
+    CrashLog = filename:join(PrivDir, "crash.log"),
+
     [
         %% What handlers to install with what arguments
         {handlers, [
                 {lager_console_backend, info},
                 {lager_file_backend, [
-                        {filename:join(PrivDir, "error.log"), error, 10485760, "$D0", 5},
-                        {filename:join(PrivDir, "console.log"), info, 10485760, "$D0", 5}
+                        {file, ErrorLog},
+                        {level, error},
+                        {size, 10485760},
+                        {date, "$D0"},
+                        {count, 5}
+                    ]
+                },
+                {lager_file_backend, [
+                        {file, ConsoleLog},
+                        {level, info},
+                        {size, 10485760},
+                        {date, "$D0"},
+                        {count, 5}
                     ]
                 }
-            ]},
+            ]
+        },
         %% Whether to write a crash log, and where. Undefined means no crash logger.
-        {crash_log, filename:join(PrivDir, "crash.log")}
+        {crash_log, CrashLog}
     ].
 
 %%====================================================================
@@ -652,11 +784,14 @@ make_n_reg_ids(N) ->
     [make_reg_id_n(Int) || Int <- lists:seq(1, N)].
 
 make_reg_id_n(N) ->
-    sc_push_reg_api:make_sc_push_props(oneof([apns, gcm]),
-                                       make_binary(<<"tok">>, N),
-                                       make_binary(<<"tag">>, N),
-                                       make_binary(<<"app_id">>, N),
-                                       oneof([<<"prod">>, <<"dev">>])).
+    sc_push_reg_db:make_sc_push_props(oneof([apns, gcm]),
+                                      make_binary(<<"tok">>, N),
+                                      make_binary(<<"some_uuid">>, N),
+                                      make_binary(<<"tag">>, N),
+                                      make_binary(<<"app_id">>, N),
+                                      oneof([<<"prod">>, <<"dev">>]),
+                                      1, os:timestamp()
+                                    ).
 
 make_binary(<<BinPrefix/binary>>, N) when is_integer(N), N >= 0 ->
     <<BinPrefix/binary, $_, (sc_util:to_bin(N))/binary>>. 
@@ -681,8 +816,10 @@ sorted_reg_pls_equal([], []) ->
 sorted_reg_pls_equal(PLs1, PLs2) ->
     throw({unequal_list_of_proplists, PLs1, PLs2}).
 
+%% Don't compare version and modified because those are guaranteed to be changed
+%% every time the record is written.
 reg_pl_equal(PL1, PL2) ->
     lists:all(fun(K) -> proplists:get_value(K, PL1) =:= proplists:get_value(K, PL2) end,
-              [service, token, tag, app_id, dist]).
+              [service, token, tag, app_id, dist, id]).
 
 
