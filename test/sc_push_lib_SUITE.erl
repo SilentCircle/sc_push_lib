@@ -226,7 +226,7 @@ end_per_testcase(_Case, Config) ->
 %%
 %% Description: Returns a list of test case group definitions.
 %%--------------------------------------------------------------------
-groups() -> 
+groups() ->
     [
         {
             registration,
@@ -281,7 +281,7 @@ groups() ->
 %% Description: Returns the list of groups and test cases that
 %%              are to be executed.
 %%--------------------------------------------------------------------
-all() -> 
+all() ->
     [
         {group, registration},
         {group, reqmgr},
@@ -429,7 +429,7 @@ reregister_id_test(Config) ->
     % Does this have the right service and token?
     OldService = value(service, RegPL),
     OldService = value(service, NewRegPL),
-    
+
     NewTok = value(token, NewRegPL),
 
     deregister_id(RegPL),
@@ -532,9 +532,9 @@ get_registration_info_by_svc_tok_test(Config) ->
     ok = sc_push_reg_api:register_id(RegPL),
     Svc = value(service, RegPL),
     Tok = value(token, RegPL),
-    
+
     [NewRegPL] = sc_push_reg_api:get_registration_info_by_svc_tok(Svc, Tok),
-    
+
     NewSvc = value(service, NewRegPL),
     NewTok = value(token, NewRegPL),
 
@@ -583,7 +583,7 @@ get_registration_info_by_device_id_test(Config) ->
 
     [NewRegPL1] = sc_push_reg_api:get_registration_info_by_device_id(DevID1),
     [NewRegPL2] = sc_push_reg_api:get_registration_info_by_device_id(DevID2),
-    
+
     NewDevID1 = value(device_id, NewRegPL1),
     NewDevID1 = DevID1,
     NewDevID2 = value(device_id, NewRegPL2),
@@ -626,7 +626,7 @@ reqmgr_test(suite) ->
 reqmgr_test(Config) ->
     ID = make_ref(),
     Req = <<"$$test_req$$">>,
-    
+
     undefined = sc_push_req_mgr:lookup(make_ref()),
     ok = sc_push_req_mgr:add(ID, Req),
 
@@ -699,7 +699,6 @@ init_per_testcase_common(Config) ->
     (catch end_per_testcase_common(Config)),
     ok = mnesia:create_schema([node()]),
     ok = mnesia:start(),
-    ok = application:start(unsplit),
     ok = application:start(jsx),
     ok = application:start(sc_util),
     ok = application:start(sc_push_lib),
@@ -709,7 +708,6 @@ end_per_testcase_common(Config) ->
     ok = application:stop(sc_push_lib),
     ok = application:stop(sc_util),
     ok = application:stop(jsx),
-    ok = application:stop(unsplit),
     stopped = mnesia:stop(),
     ok = mnesia:delete_schema([node()]),
     Config.
@@ -794,7 +792,7 @@ make_reg_id_n(N) ->
                                     ).
 
 make_binary(<<BinPrefix/binary>>, N) when is_integer(N), N >= 0 ->
-    <<BinPrefix/binary, $_, (sc_util:to_bin(N))/binary>>. 
+    <<BinPrefix/binary, $_, (sc_util:to_bin(N))/binary>>.
 
 oneof([_|_] = L) ->
     lists:nth(random:uniform(length(L)), L).

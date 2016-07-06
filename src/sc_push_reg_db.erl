@@ -68,8 +68,8 @@
         svc_tok = {undefined, <<>>} :: svc_tok_key(),
         app_id = <<>> :: binary(), % iOS AppBundleID, Android package
         dist = <<>> :: binary(), % distribution <<>> is same as <<"prod">>, or <<"dev">>
-        version = 0 :: non_neg_integer(), % unsplit support
-        modified = {0, 0, 0} :: erlang:timestamp()    % unsplit support
+        version = 0 :: non_neg_integer(),
+        modified = {0, 0, 0} :: os:timestamp()
     }).
 
 -type push_reg_list() :: list(#sc_pshrg{}).
@@ -113,10 +113,7 @@ create_tables(Nodes) ->
                 {disc_copies, Nodes},
                 {type, set},
                 {index, [#sc_pshrg.device_id, #sc_pshrg.tag, #sc_pshrg.svc_tok]},
-                {attributes, record_info(fields, sc_pshrg)},
-                {user_properties,
-                    [{unsplit_method, {unsplit_lib, last_modified, []}}]
-                }
+                {attributes, record_info(fields, sc_pshrg)}
             ]
         }
     ],
