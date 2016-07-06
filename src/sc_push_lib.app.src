@@ -8,7 +8,6 @@
                 stdlib,
                 sasl,
                 mnesia,
-                unsplit,
                 compiler,
                 syntax_tools,
                 goldrush,
