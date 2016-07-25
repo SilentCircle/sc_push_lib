@@ -20,8 +20,6 @@
 %% {scale_timetraps, Bool}.
 %% {scale_timetraps, NodeRefs, Bool}.
 
-%% NOTE: rebar overrides {cover, ...} by looking for a file ending in cover.spec
-
 %% {cover, CoverSpecFile}.
 %% {cover, NodeRefs, CoverSpecFile}.
 

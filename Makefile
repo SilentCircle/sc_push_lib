@@ -1,65 +1,53 @@
-REBAR = rebar
+.PHONY: compile ct dialyzer docclean distclean docs xref clean
 
-.PHONY: compile deps ct check_plt dialyzer typer cleanplt clean
+REBAR_PROFILE ?= default
+THIS_MAKEFILE := $(lastword $(MAKEFILE_LIST))
 
-all: deps compile
+$(info $(THIS_MAKEFILE) is using REBAR_PROFILE=$(REBAR_PROFILE))
 
-compile: deps
-	$(REBAR) compile
+REBAR3_URL = https://s3.amazonaws.com/rebar3/rebar3
 
-deps:
-	$(REBAR) get-deps
+# If there is a rebar in the current directory, use it
+ifeq ($(wildcard rebar3),rebar3)
+REBAR = $(CURDIR)/rebar3
+endif
+
+# Fallback to rebar on PATH
+REBAR ?= $(shell which rebar3)
+
+# And finally, prep to download rebar if all else fails
+ifeq ($(REBAR),)
+REBAR = $(CURDIR)/rebar3
+endif
+
+all: compile
+
+compile: $(REBAR)
+	$(REBAR) do clean, compile
 
 clean: docclean
 	$(REBAR) clean
 
-ct:	all
-	$(REBAR) ct skip_deps=true
-	
-APPS = kernel stdlib sasl erts ssl tools os_mon runtime_tools crypto inets \
-       xmerl webtool snmp public_key mnesia eunit common_test syntax_tools compiler
-REPO = sc_push
-COMBO_PLT = $(HOME)/.$(REPO)_combo_dialyzer_plt
+ct: $(REBAR)
+	$(REBAR) do ct, cover
 
-check_plt: $(COMBO_PLT)
-	dialyzer --check_plt \
-			 --plt $(COMBO_PLT) \
-			 --apps $(APPS) \
-             ebin deps/*/ebin
-
-$(COMBO_PLT):
-	dialyzer --build_plt --output_plt $(COMBO_PLT) --apps $(APPS) \
-             ebin deps/*/ebin
-
-dialyzer: compile $(COMBO_PLT)
-	@echo
-	@echo Use "'make check_plt'" to check PLT prior to using this target.
-	@echo Use "'make build_plt'" to build PLT prior to using this target.
-	@echo
-	@sleep 1
-	dialyzer -Wno_return --plt $(COMBO_PLT) -c ebin
-
-typer: compile $(COMBO_PLT)
-	typer --plt $(COMBO_PLT) -r ./src
-
-cleanplt:
-	@echo
-	@echo "Are you sure? It takes significant amount of time to re-build."
-	@echo Deleting $(COMBO_PLT) in 5 seconds.
-	@echo
-	sleep 5
-	rm -f $(COMBO_PLT)
+dialyzer: $(REBAR)
+	$(REBAR) dialyzer
 
 docclean:
 	@rm -rf doc/*.html doc/edoc-info html/
 
 distclean: clean
-	$(REBAR) delete-deps
-	@rm -rf deps logs .test
+	@rm -rf _build logs .test
 	@rm -rf doc/*.html doc/edoc-info html/
 
-docs:
-	$(REBAR) doc skip_deps=true
+docs: $(REBAR)
+	$(REBAR) edoc
 
-xref: all
-	$(REBAR) xref skip_deps=true
+xref: $(REBAR)
+	$(REBAR) xref
+
+$(REBAR):
+	curl -s -Lo rebar3 $(REBAR3_URL) || wget $(REBAR3_URL)
+	chmod a+x $(REBAR)
+

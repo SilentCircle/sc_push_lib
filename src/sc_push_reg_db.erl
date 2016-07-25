@@ -69,7 +69,7 @@
         app_id = <<>> :: binary(), % iOS AppBundleID, Android package
         dist = <<>> :: binary(), % distribution <<>> is same as <<"prod">>, or <<"dev">>
         version = 0 :: non_neg_integer(),
-        modified = {0, 0, 0} :: os:timestamp()
+        modified = {0, 0, 0} :: erlang:timestamp()
     }).
 
 -type push_reg_list() :: list(#sc_pshrg{}).
@@ -251,7 +251,7 @@ make_sc_pshrg([_|_] = Props)  ->
                     binable(), binable(), binable()) -> #sc_pshrg{}.
 make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist) ->
     make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist, 0,
-                  os:timestamp()).
+                  erlang:timestamp()).
 
 -spec make_sc_pshrg(atom_or_str(), binable(), binable(),
                     binable(), binable(), binable(), non_neg_integer(),
@@ -300,7 +300,7 @@ upgrade_sc_pshrg() ->
         [id, tag, app_id, dist, last_updated] -> % Old format
             ok = mnesia:wait_for_tables([sc_pshrg], 30000),
             Vers = 1, % Record version
-            ModTs = os:timestamp(),
+            ModTs = erlang:timestamp(),
             % Token is used as default ID when converting from old-style records
             Xform = fun({sc_pshrg, {Svc, Tok}, Tag, AppId, Dist, _Time}) ->
                     DeviceID = Tok,
@@ -469,7 +469,7 @@ delete_rec(#sc_pshrg{} = R) ->
 
 -compile({inline, [{inc, 1}]}).
 inc(#sc_pshrg{version = V} = R) ->
-    R#sc_pshrg{modified = os:timestamp(), version = V + 1}.
+    R#sc_pshrg{modified = erlang:timestamp(), version = V + 1}.
 
 -compile({inline, [{do_txn, 2}]}).
 -spec do_txn(fun(), list()) -> Result::term().
