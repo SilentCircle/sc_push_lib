@@ -3,76 +3,10 @@
 %%%-----------------------------------------------------------------
 
 -module(sc_push_lib_SUITE).
+-compile(export_all).
 
 -include_lib("common_test/include/ct.hrl").
-
--export([all/0,
-         suite/0,
-         groups/0,
-         init_per_suite/1,
-         end_per_suite/1,
-         init_per_group/2,
-         end_per_group/2,
-         init_per_testcase/2,
-         end_per_testcase/2]).
-
--export([
-        make_id_test/1,
-        make_svc_tok_test/1,
-        make_push_props_test/1,
-        is_valid_push_reg_test/1,
-        register_id_test/1,
-        reregister_id_test/1,
-        register_ids_test/1,
-        register_ids_bad_id_test/1,
-        deregister_ids_bad_id_test/1,
-        all_registration_info_test/1,
-        get_registration_info_test/1,
-        get_registration_info_by_id_test/1,
-        get_registration_info_by_device_id_test/1,
-        get_registration_info_by_tag_test/1,
-        get_registration_info_by_svc_tok_test/1,
-        get_registration_info_not_found_test/1,
-        get_registration_info_by_id_not_found_test/1,
-        reqmgr_test/1,
-        sc_config_test/1
-    ]).
-
--define(assertMsg(Cond, Fmt, Args),
-    case (Cond) of
-        true ->
-            ok;
-        false ->
-            ct:fail("Assertion failed: ~p~n" ++ Fmt, [??Cond] ++ Args)
-    end
-).
-
--define(assert(Cond), ?assertMsg((Cond), "", [])).
--define(
-    assertEqual(LHS, RHS),
-        ?assertMsg(
-            LHS == RHS,
-            "~s=~p, ~s=~p", [??LHS, LHS, ??RHS, RHS]
-        )
-).
--define(assertThrow(Expr, Class, Reason),
-    begin
-            ok = (fun() ->
-                    try (Expr) of
-                        Res ->
-                            {unexpected_return, Res}
-                    catch
-                        C:R ->
-                            case {C, R} of
-                                {Class, Reason} ->
-                                    ok;
-                                _ ->
-                                    {unexpected_exception, {C, R}}
-                            end
-                    end
-            end)()
-    end
-).
+-include("test_assertions.hrl").
 
 %%--------------------------------------------------------------------
 %% COMMON TEST CALLBACK FUNCTIONS
@@ -248,6 +182,13 @@ groups() ->
             ]
         },
         {
+            sc_push_lib,
+            [],
+            [
+                sc_push_lib_test
+            ]
+        },
+        {
             reqmgr,
             [],
             [
@@ -280,6 +221,7 @@ groups() ->
 all() ->
     [
         {group, registration},
+        {group, sc_push_lib},
         {group, reqmgr},
         {group, sc_config}
     ].
@@ -612,6 +554,31 @@ get_registration_info_by_id_not_found_test(Config) ->
     notfound = sc_push_reg_api:get_registration_info_by_id(FakeID),
     ct:pal("Got expected 'notfound' result for ID ~p~n", [FakeID]),
     Config.
+
+%%--------------------------------------------------------------------
+%% Group: sc_push_lib
+%%--------------------------------------------------------------------
+sc_push_lib_test(doc) ->
+    ["Test sc_push_lib:register_service, unregister_service, get_service_config"];
+sc_push_lib_test(suite) ->
+    [];
+sc_push_lib_test(Config) ->
+    SvcName = some_test_service,
+    SvcConfig = [{name, SvcName}],
+    % Register
+    ok = sc_push_lib:register_service(SvcConfig),
+    % Get service config (happy)
+    {ok, SvcConfig} = sc_push_lib:get_service_config(SvcName),
+    % Get service config (unhappy)
+    {error, {unregistered_service,
+             foobarbaz}} = sc_push_lib:get_service_config(foobarbaz),
+    % Unregister nonexistent service
+    ok = sc_push_lib:unregister_service(foobarbaz),
+    % Unregister service we just registered
+    ok = sc_push_lib:unregister_service(SvcName),
+    % Check it's gone
+    {error, {unregistered_service,
+             SvcName}} = sc_push_lib:get_service_config(SvcName).
 
 %%--------------------------------------------------------------------
 %% Group: reqmgr
