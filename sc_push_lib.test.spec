@@ -20,7 +20,8 @@
 %% {scale_timetraps, Bool}.
 %% {scale_timetraps, NodeRefs, Bool}.
 
-%% {cover, CoverSpecFile}.
+{cover, "./cover.spec"}.
+
 %% {cover, NodeRefs, CoverSpecFile}.
 
 %% {include, IncludeDirs}.

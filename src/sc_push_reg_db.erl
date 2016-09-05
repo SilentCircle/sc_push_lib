@@ -1,3 +1,19 @@
+%%% ==========================================================================
+%%% Copyright 2015, 2016 Silent Circle
+%%%
+%%% Licensed under the Apache License, Version 2.0 (the "License");
+%%% you may not use this file except in compliance with the License.
+%%% You may obtain a copy of the License at
+%%%
+%%%     http://www.apache.org/licenses/LICENSE-2.0
+%%%
+%%% Unless required by applicable law or agreed to in writing, software
+%%% distributed under the License is distributed on an "AS IS" BASIS,
+%%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%%% See the License for the specific language governing permissions and
+%%% limitations under the License.
+%%% ==========================================================================
+
 -module(sc_push_reg_db).
 
 -export([
@@ -311,9 +327,9 @@ upgrade_sc_pshrg() ->
             % on other nodes, too, and if they are running the old code,
             % the process will crash when the table is upgraded.
             NewAttrs = record_info(fields, sc_pshrg),
-            delete_all_table_indexes(sc_pshrg),
+            ok = delete_all_table_indexes(sc_pshrg),
             {atomic, ok} = mnesia:transform_table(sc_pshrg, Xform, NewAttrs),
-            add_table_indexes(sc_pshrg, [device_id, tag, svc_tok]),
+            _ = add_table_indexes(sc_pshrg, [device_id, tag, svc_tok]),
             ok;
         _ -> % Leave alone
             ok
@@ -327,8 +343,9 @@ fix_tag(<<Tag/binary>>) ->
     <<$x,$m,$p,$p,$:, Tag/binary>>.
 
 delete_all_table_indexes(Tab) ->
-    [{atomic, ok} = mnesia:del_table_index(Tab, N)
-        || N <- mnesia:table_info(Tab, index)].
+    _ = [{atomic, ok} = mnesia:del_table_index(Tab, N)
+         || N <- mnesia:table_info(Tab, index)],
+    ok.
 
 add_table_indexes(Tab, Attrs) ->
     [
@@ -372,7 +389,7 @@ save_push_regs_txn() ->
 -spec delete_push_regs_txn() -> fun(([binary()]) -> ok).
 delete_push_regs_txn() ->
     fun(IDs) ->
-            [mnesia:delete({sc_pshrg, ID}) || ID <- IDs],
+            _ = [mnesia:delete({sc_pshrg, ID}) || ID <- IDs],
             ok
     end.
 
@@ -402,9 +419,9 @@ delete_push_reg_by_index(Key, Index) ->
         [] ->
             ok;
         Recs ->
-            [mnesia:delete({sc_pshrg, R#sc_pshrg.id}) || R <- Recs]
-    end,
-    ok.
+            _ = [mnesia:delete({sc_pshrg, R#sc_pshrg.id}) || R <- Recs],
+            ok
+    end.
 
 -spec reregister_ids_txn() -> fun(([{reg_id_key(), binary()}]) -> ok).
 reregister_ids_txn() ->

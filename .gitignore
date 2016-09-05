@@ -5,3 +5,5 @@ test/*.beam
 logs/
 deps/
 ebin/
+_build/
+rebar3

@@ -1,3 +1,19 @@
+%%% ==========================================================================
+%%% Copyright 2015, 2016 Silent Circle
+%%%
+%%% Licensed under the Apache License, Version 2.0 (the "License");
+%%% you may not use this file except in compliance with the License.
+%%% You may obtain a copy of the License at
+%%%
+%%%     http://www.apache.org/licenses/LICENSE-2.0
+%%%
+%%% Unless required by applicable law or agreed to in writing, software
+%%% distributed under the License is distributed on an "AS IS" BASIS,
+%%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%%% See the License for the specific language governing permissions and
+%%% limitations under the License.
+%%% ==========================================================================
+
 %%%-------------------------------------------------------------------
 %%% @author Edwin Fine
 %%% @copyright (C) 2012,2013 Silent Circle LLC
@@ -199,7 +215,7 @@ default_callback(_Props) ->
                       'ignore'
                       .
 init([]) ->
-    create_tables(),
+    _ = create_tables(),
     State = #state{},
     TimerRef = schedule_sweeper(self(), State#state.sweep_interval),
     {ok, State#state{sweep_timer_ref = TimerRef}}.
@@ -311,7 +327,7 @@ handle_info(_Info, State) ->
 -spec terminate(Reason::terminate_reason(),
                 State::term()) -> no_return().
 terminate(_Reason, State) ->
-    cancel_sweeper(State#state.sweep_timer_ref),
+    _ = cancel_sweeper(State#state.sweep_timer_ref),
     ok.
 
 %%--------------------------------------------------------------------
@@ -378,10 +394,10 @@ lookup_req_internal(Id) ->
     end.
 
 do_sweep(Pid, OldRef, MaxAgeSecs, SweepInterval) ->
-    cancel_sweeper(OldRef),
+    _ = cancel_sweeper(OldRef),
     NumDel = sweep_impl(MaxAgeSecs),
     TimerRef = schedule_sweeper(Pid, SweepInterval),
-    log_purged_reqs(NumDel),
+    _ = log_purged_reqs(NumDel),
     {TimerRef, NumDel}.
 
 -spec sweep_impl(non_neg_integer()) -> NumDeleted::non_neg_integer().
