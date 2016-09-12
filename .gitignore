@@ -1,0 +1,11 @@
+*.sw?
+doc/*.html
+doc/edoc-info
+test/*.beam
+extra_test/*.beam
+logs/
+deps/
+ebin/
+.deps_plt
+.rebar/
+variables-ct*
