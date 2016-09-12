@@ -3,41 +3,9 @@
 %%%-----------------------------------------------------------------
 
 -module(sc_push_lib_SUITE).
+-compile(export_all).
 
 -include_lib("common_test/include/ct.hrl").
-
--export([all/0,
-         suite/0,
-         groups/0,
-         init_per_suite/1,
-         end_per_suite/1,
-         init_per_group/2,
-         end_per_group/2,
-         init_per_testcase/2,
-         end_per_testcase/2]).
-
--export([
-        make_id_test/1,
-        make_svc_tok_test/1,
-        make_push_props_test/1,
-        is_valid_push_reg_test/1,
-        register_id_test/1,
-        reregister_id_test/1,
-        register_ids_test/1,
-        register_ids_bad_id_test/1,
-        deregister_ids_bad_id_test/1,
-        all_registration_info_test/1,
-        get_registration_info_test/1,
-        get_registration_info_by_id_test/1,
-        get_registration_info_by_device_id_test/1,
-        get_registration_info_by_tag_test/1,
-        get_registration_info_by_svc_tok_test/1,
-        get_registration_info_not_found_test/1,
-        get_registration_info_by_id_not_found_test/1,
-        reqmgr_test/1,
-        sc_config_test/1
-    ]).
-
 -include("test_assertions.hrl").
 
 %%--------------------------------------------------------------------
@@ -138,14 +106,13 @@ end_per_group(_GroupName, _Config) ->
 %% variable, but should NOT alter/remove any existing entries.
 %%--------------------------------------------------------------------
 init_per_testcase(_Case, Config) ->
-    ok = application:start(sasl),
-    ok = application:load(lager),
+    ok = application:ensure_started(sasl),
+    _ = application:load(lager),
     [ok = application:set_env(lager, K, V) || {K, V} <- lager_config(Config)],
-    ok = application:start(compiler),
-    ok = application:start(syntax_tools),
-    ok = application:start(goldrush),
-    ok = application:start(lager),
-    init_per_testcase_common(Config).
+    ok = mnesia:create_schema([node()]),
+    {ok, Apps} = application:ensure_all_started(sc_push_lib),
+    Started = {apps, [sasl | Apps]},
+    [Started | proplists:delete(apps, Config)].
 
 %%--------------------------------------------------------------------
 %% Function: end_per_testcase(TestCase, Config0) ->
@@ -161,15 +128,12 @@ init_per_testcase(_Case, Config) ->
 %% Description: Cleanup after each test case.
 %%--------------------------------------------------------------------
 end_per_testcase(_Case, Config) ->
-    Ret = end_per_testcase_common(Config),
-    ok = application:stop(lager),
-    ok = application:stop(goldrush),
-    ok = application:stop(syntax_tools),
-    ok = application:stop(compiler),
-    ok = application:unload(lager),
+    Apps = lists:reverse(value(apps, Config)),
+    ct:pal("Config:~n~p~n", [Config]),
+    _ = [ok = application:stop(App) || App <- Apps],
     code:purge(lager_console_backend), % ct gives error otherwise
-    ok = application:stop(sasl),
-    Ret.
+    ok = mnesia:delete_schema([node()]),
+    Config.
 
 %%--------------------------------------------------------------------
 %% Function: groups() -> [Group]
@@ -218,6 +182,13 @@ groups() ->
             ]
         },
         {
+            sc_push_lib,
+            [],
+            [
+                sc_push_lib_test
+            ]
+        },
+        {
             reqmgr,
             [],
             [
@@ -250,6 +221,7 @@ groups() ->
 all() ->
     [
         {group, registration},
+        {group, sc_push_lib},
         {group, reqmgr},
         {group, sc_config}
     ].
@@ -301,8 +273,9 @@ is_valid_push_reg_test(Config) ->
     Dist = <<"prod">>,
     DeviceId = <<"test_device_id">>,
 
-    GoodProps = sc_push_reg_db:make_sc_push_props(Service, Token, DeviceId, Tag,
-                                                  AppId, Dist, 1, os:timestamp()),
+    GoodProps = sc_push_reg_db:make_sc_push_props(Service, Token, DeviceId,
+                                                  Tag, AppId, Dist, 1,
+                                                  erlang:timestamp()),
 
     true = sc_push_reg_api:is_valid_push_reg(GoodProps),
 
@@ -323,7 +296,7 @@ make_push_props_test(Config) ->
     Dist = <<"prod">>,
     DeviceId = <<"test_device_id">>,
     Version = 1,
-    Modified = os:timestamp(),
+    Modified = erlang:timestamp(),
 
     Props = sc_push_reg_db:make_sc_push_props(Service, Token, DeviceId, Tag,
                                               AppId, Dist, Version, Modified),
@@ -583,6 +556,31 @@ get_registration_info_by_id_not_found_test(Config) ->
     Config.
 
 %%--------------------------------------------------------------------
+%% Group: sc_push_lib
+%%--------------------------------------------------------------------
+sc_push_lib_test(doc) ->
+    ["Test sc_push_lib:register_service, unregister_service, get_service_config"];
+sc_push_lib_test(suite) ->
+    [];
+sc_push_lib_test(_Config) ->
+    SvcName = some_test_service,
+    SvcConfig = [{name, SvcName}],
+    % Register
+    ok = sc_push_lib:register_service(SvcConfig),
+    % Get service config (happy)
+    {ok, SvcConfig} = sc_push_lib:get_service_config(SvcName),
+    % Get service config (unhappy)
+    {error, {unregistered_service,
+             foobarbaz}} = sc_push_lib:get_service_config(foobarbaz),
+    % Unregister nonexistent service
+    ok = sc_push_lib:unregister_service(foobarbaz),
+    % Unregister service we just registered
+    ok = sc_push_lib:unregister_service(SvcName),
+    % Check it's gone
+    {error, {unregistered_service,
+             SvcName}} = sc_push_lib:get_service_config(SvcName).
+
+%%--------------------------------------------------------------------
 %% Group: reqmgr
 %%--------------------------------------------------------------------
 reqmgr_test(doc) ->
@@ -661,25 +659,6 @@ sc_config_test(Config) ->
 %%====================================================================
 %% Internal helper functions
 %%====================================================================
-init_per_testcase_common(Config) ->
-    (catch end_per_testcase_common(Config)),
-    ok = mnesia:create_schema([node()]),
-    ok = mnesia:start(),
-    ok = application:start(unsplit),
-    ok = application:start(jsx),
-    ok = application:start(sc_util),
-    ok = application:start(sc_push_lib),
-    Config.
-
-end_per_testcase_common(Config) ->
-    ok = application:stop(sc_push_lib),
-    ok = application:stop(sc_util),
-    ok = application:stop(jsx),
-    ok = application:stop(unsplit),
-    stopped = mnesia:stop(),
-    ok = mnesia:delete_schema([node()]),
-    Config.
-
 deregister_id(RegPL) ->
     ID = id_from_reg_props(RegPL),
     ok = sc_push_reg_api:deregister_id(ID),
@@ -756,7 +735,7 @@ make_reg_id_n(N) ->
                                       make_binary(<<"tag">>, N),
                                       make_binary(<<"app_id">>, N),
                                       oneof([<<"prod">>, <<"dev">>]),
-                                      1, os:timestamp()
+                                      1, erlang:timestamp()
                                     ).
 
 make_binary(<<BinPrefix/binary>>, N) when is_integer(N), N >= 0 ->

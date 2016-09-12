@@ -8,7 +8,7 @@
 
 Push service common library functions.
 
-Copyright (c) 2015 Silent Circle
+Copyright (c) 2015, 2016 Silent Circle
 
 __Authors:__ Edwin Fine ([`efine@silentcircle.com`](mailto:efine@silentcircle.com)).
 

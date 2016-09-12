@@ -4,10 +4,8 @@
 
 {config, ["extra_test/test.config"]}.
 {logdir, ["logs"]}.
-{include, ["include"]}.
 
 %%--------------------------------------------------------------------
 %% Test terms
 %%--------------------------------------------------------------------
 
-{suites, "./extra_test", [rebar_config_SUITE]}.

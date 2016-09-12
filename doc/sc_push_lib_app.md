@@ -7,7 +7,7 @@
 
 Application callbacks.
 
-Copyright (c) 2015 Silent Circle
+Copyright (c) 2015, 2016 Silent Circle
 
 __Behaviours:__ [`application`](application.md).
 

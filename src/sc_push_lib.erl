@@ -16,7 +16,7 @@
 
 %%%-------------------------------------------------------------------
 %%% @author Edwin Fine <efine@silentcircle.com>
-%%% @copyright 2015 Silent Circle
+%%% @copyright 2015, 2016 Silent Circle
 %%% @doc
 %%% Push service common library functions.
 %%% @end

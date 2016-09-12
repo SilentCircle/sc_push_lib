@@ -7,8 +7,6 @@
 
 Configuration server for sc_push.
 
-Copyright (c) (C) 2012,2013 Silent Circle LLC
-
 __Behaviours:__ [`gen_server`](gen_server.md).
 
 __Authors:__ Edwin Fine.

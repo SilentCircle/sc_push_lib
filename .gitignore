@@ -1,11 +1,7 @@
 *.sw?
 doc/*.html
+doc/*.md
 doc/edoc-info
 test/*.beam
-extra_test/*.beam
-logs/
-deps/
-ebin/
-.deps_plt
-.rebar/
-variables-ct*
+_build/
+rebar3

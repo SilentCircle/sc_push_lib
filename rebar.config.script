@@ -81,18 +81,6 @@ fun(Filename) ->
         end
 end.
 
-%% Merge so that extra deps override ones in rebar deps, or append them
-%% if not present.
-MergeDeps =
-fun(RebarDeps, ExtraDeps) ->
-        % Don't want to use keymerge because need to
-        % preserve deps ordering
-        lists:foldl(fun(Tuple, A) ->
-                            K = element(1, Tuple),
-                            lists:keystore(K, 1, A, Tuple)
-                    end, RebarDeps, ExtraDeps)
-end.
-
 ValTarget =
 fun(Target) ->
         TargAtom = list_to_atom(Target),
@@ -107,18 +95,6 @@ end.
 %% variable, the second the rebar config.
 %% Funs return the second parameter, possibly modified.
 %%
-
-AddExtraDeps =
-fun(Filename, Cfg) ->
-        case GetDeps(Filename) of
-            [] ->
-                Cfg;
-            ExtraDeps ->
-                RebarDeps = proplists:get_value(deps, Cfg, []),
-                NewDeps = MergeDeps(RebarDeps, ExtraDeps),
-                lists:keystore(deps, 1, Cfg, {deps, NewDeps})
-        end
-end.
 
 ChangeEdownTarget = fun(Target, Cfg) ->
                             NewTarget = {edown_target, ValTarget(Target)},
@@ -140,10 +116,6 @@ ChangeEdownUrl = fun(Url, Cfg) ->
 %%
 %% Funs that run the change function if the environment variable is present.
 %%
-CfgExtraDeps = fun(Cfg) ->
-                       RunIfEnvVar("REBAR_EXTRA_DEPS_CFG", AddExtraDeps, Cfg)
-               end.
-
 CfgEdownTarget = fun(Cfg) ->
                          RunIfEnvVar("EDOWN_TARGET", ChangeEdownTarget, Cfg)
                  end.
@@ -175,7 +147,7 @@ end.
 
 %% Finally, chain the config change functions
 NC = lists:foldl(fun(F, Cfg) -> F(Cfg) end, CONFIG,
-                 [CfgEdownUrl, CfgEdownTarget, CfgExtraDeps, CfgVersion]),
+                 [CfgEdownUrl, CfgEdownTarget, CfgVersion]),
 DbgDo(fun() -> file:write_file("CONFIG", io_lib:format("~p~n", [NC])) end),
 NC.
 

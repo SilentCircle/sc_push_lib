@@ -1,5 +1,5 @@
 %%% ==========================================================================
-%%% Copyright 2015 Silent Circle
+%%% Copyright 2015, 2016 Silent Circle
 %%%
 %%% Licensed under the Apache License, Version 2.0 (the "License");
 %%% you may not use this file except in compliance with the License.
@@ -84,8 +84,8 @@
         svc_tok = {undefined, <<>>} :: svc_tok_key(),
         app_id = <<>> :: binary(), % iOS AppBundleID, Android package
         dist = <<>> :: binary(), % distribution <<>> is same as <<"prod">>, or <<"dev">>
-        version = 0 :: non_neg_integer(), % unsplit support
-        modified = {0, 0, 0} :: erlang:timestamp()    % unsplit support
+        version = 0 :: non_neg_integer(),
+        modified = {0, 0, 0} :: erlang:timestamp()
     }).
 
 -type push_reg_list() :: list(#sc_pshrg{}).
@@ -129,10 +129,7 @@ create_tables(Nodes) ->
                 {disc_copies, Nodes},
                 {type, set},
                 {index, [#sc_pshrg.device_id, #sc_pshrg.tag, #sc_pshrg.svc_tok]},
-                {attributes, record_info(fields, sc_pshrg)},
-                {user_properties,
-                    [{unsplit_method, {unsplit_lib, last_modified, []}}]
-                }
+                {attributes, record_info(fields, sc_pshrg)}
             ]
         }
     ],
@@ -270,7 +267,7 @@ make_sc_pshrg([_|_] = Props)  ->
                     binable(), binable(), binable()) -> #sc_pshrg{}.
 make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist) ->
     make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist, 0,
-                  os:timestamp()).
+                  erlang:timestamp()).
 
 -spec make_sc_pshrg(atom_or_str(), binable(), binable(),
                     binable(), binable(), binable(), non_neg_integer(),
@@ -319,7 +316,7 @@ upgrade_sc_pshrg() ->
         [id, tag, app_id, dist, last_updated] -> % Old format
             ok = mnesia:wait_for_tables([sc_pshrg], 30000),
             Vers = 1, % Record version
-            ModTs = os:timestamp(),
+            ModTs = erlang:timestamp(),
             % Token is used as default ID when converting from old-style records
             Xform = fun({sc_pshrg, {Svc, Tok}, Tag, AppId, Dist, _Time}) ->
                     DeviceID = Tok,
@@ -332,7 +329,8 @@ upgrade_sc_pshrg() ->
             NewAttrs = record_info(fields, sc_pshrg),
             ok = delete_all_table_indexes(sc_pshrg),
             {atomic, ok} = mnesia:transform_table(sc_pshrg, Xform, NewAttrs),
-            _ = add_table_indexes(sc_pshrg, [device_id, tag, svc_tok]);
+            _ = add_table_indexes(sc_pshrg, [device_id, tag, svc_tok]),
+            ok;
         _ -> % Leave alone
             ok
     end.
@@ -488,7 +486,7 @@ delete_rec(#sc_pshrg{} = R) ->
 
 -compile({inline, [{inc, 1}]}).
 inc(#sc_pshrg{version = V} = R) ->
-    R#sc_pshrg{modified = os:timestamp(), version = V + 1}.
+    R#sc_pshrg{modified = erlang:timestamp(), version = V + 1}.
 
 -compile({inline, [{do_txn, 2}]}).
 -spec do_txn(fun(), list()) -> Result::term().
