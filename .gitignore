@@ -5,3 +5,5 @@ doc/edoc-info
 test/*.beam
 _build/
 rebar3
+ebin/
+.rebar3/

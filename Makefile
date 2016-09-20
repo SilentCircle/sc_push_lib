@@ -1,4 +1,4 @@
-.PHONY: compile ct ct_clean dialyzer docclean distclean docs xref clean info
+.PHONY: compile ct ct_clean dialyzer docclean distclean docs run xref clean info
 
 REBAR_PROFILE ?= default
 THIS_MAKEFILE := $(lastword $(MAKEFILE_LIST))
@@ -37,7 +37,8 @@ ct: $(REBAR)
 	REBAR_DIR=$(CURDIR) $(REBAR) do clean, ct --readable
 
 ct_clean:
-	rm -rf _build/test/{logs,cover}/
+	@rm -rf _build/test/logs/
+	@rm -rf _build/test/cover/
 
 dialyzer: $(REBAR)
 	$(REBAR) dialyzer
@@ -46,8 +47,9 @@ docclean:
 	@rm -rf doc/*.html doc/edoc-info html/
 
 distclean: clean
-	@rm -rf _build logs .test
+	@rm -rf _build log logs .test sasl_error.log
 	@rm -rf doc/*.html doc/edoc-info html/
+	@rm -rf Mnesia.*/
 
 docs: $(REBAR)
 	$(REBAR) edoc
