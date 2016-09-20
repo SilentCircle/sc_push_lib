@@ -57,7 +57,7 @@
 %% @doc Initialize API.
 -spec init() -> ok.
 init() ->
-    _ = sc_push_reg_db:create_tables([node()]),
+    _ = sc_push_reg_db:init([node()]),
     ok.
 
 %% @doc Get registration info of all registered IDs. Note

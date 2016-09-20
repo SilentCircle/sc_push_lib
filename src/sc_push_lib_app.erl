@@ -27,6 +27,8 @@
 
 -export([start/2, stop/1]).
 
+-include_lib("lager/include/lager.hrl").
+
 %% ===================================================================
 %% Application callbacks
 %% ===================================================================
@@ -60,3 +62,4 @@ start(_StartType, _StartArgs) ->
 -spec stop(State) -> 'ok' when State :: term().
 stop(_State) ->
     ok.
+

@@ -106,9 +106,12 @@ end_per_group(_GroupName, _Config) ->
 %% variable, but should NOT alter/remove any existing entries.
 %%--------------------------------------------------------------------
 init_per_testcase(_Case, Config) ->
+    PrivDir = value(priv_dir, Config), % Standard CT variable
+    MnesiaDir = filename:join(PrivDir, "mnesia"),
     ok = application:ensure_started(sasl),
     _ = application:load(lager),
     [ok = application:set_env(lager, K, V) || {K, V} <- lager_config(Config)],
+    ok = application:set_env(mnesia, dir, MnesiaDir),
     ok = mnesia:create_schema([node()]),
     {ok, Apps} = application:ensure_all_started(sc_push_lib),
     Started = {apps, [sasl | Apps]},

@@ -31,6 +31,7 @@
         get_registration_info_by_svc_tok/1,
         get_registration_info_by_tag/1,
         is_valid_push_reg/1,
+        init/1,
         make_id/2,
         make_sc_push_props/8,
         make_svc_tok/2,
@@ -122,6 +123,16 @@ check_id(ID) ->
 check_ids(IDs) when is_list(IDs) ->
     [check_id(ID) || ID <- IDs].
 
+init(Nodes) ->
+    case application:get_env(mnesia, dir) of
+        {ok, Dir} ->
+            lager:info("Mnesia dir: ~s", [Dir]),
+            ok = filelib:ensure_dir(Dir),
+            create_tables(Nodes);
+        _Error ->
+            erlang:error("mnesia dir needs to be defined in env")
+    end.
+
 create_tables(Nodes) ->
     Defs = [
         {sc_pshrg,
@@ -134,7 +145,7 @@ create_tables(Nodes) ->
         }
     ],
 
-    [create_table(Tab, Attrs) || {Tab, Attrs} <- Defs],
+    _ = [create_table(Tab, Attrs) || {Tab, Attrs} <- Defs],
     upgrade_tables().
 
 %% @doc Delete push registrations by device ids
@@ -309,53 +320,7 @@ create_table(Tab, Attrs) ->
     end.
 
 upgrade_tables() ->
-    upgrade_sc_pshrg().
-
-upgrade_sc_pshrg() ->
-    case mnesia:table_info(sc_pshrg, attributes) of
-        [id, tag, app_id, dist, last_updated] -> % Old format
-            ok = mnesia:wait_for_tables([sc_pshrg], 30000),
-            Vers = 1, % Record version
-            ModTs = erlang:timestamp(),
-            % Token is used as default ID when converting from old-style records
-            Xform = fun({sc_pshrg, {Svc, Tok}, Tag, AppId, Dist, _Time}) ->
-                    DeviceID = Tok,
-                    make_sc_pshrg(Svc, Tok, DeviceID, fix_tag(Tag), AppId, Dist, Vers, ModTs)
-            end,
-
-            % Transform table (will transform all replicas of the table
-            % on other nodes, too, and if they are running the old code,
-            % the process will crash when the table is upgraded.
-            NewAttrs = record_info(fields, sc_pshrg),
-            ok = delete_all_table_indexes(sc_pshrg),
-            {atomic, ok} = mnesia:transform_table(sc_pshrg, Xform, NewAttrs),
-            _ = add_table_indexes(sc_pshrg, [device_id, tag, svc_tok]),
-            ok;
-        _ -> % Leave alone
-            ok
-    end.
-
-%% Skip tags already with an "xmpp:" prefix
-fix_tag(<<$x,$m,$p,$p,$:, _/binary>> = Tag) ->
-    Tag;
-%% Add prefix
-fix_tag(<<Tag/binary>>) ->
-    <<$x,$m,$p,$p,$:, Tag/binary>>.
-
-delete_all_table_indexes(Tab) ->
-    _ = [{atomic, ok} = mnesia:del_table_index(Tab, N)
-         || N <- mnesia:table_info(Tab, index)],
-    ok.
-
-add_table_indexes(Tab, Attrs) ->
-    [
-        case mnesia:add_table_index(Tab, Attr) of
-            {aborted,{already_exists, _, _}} ->
-                ok;
-            {atomic, ok} ->
-                ok
-        end || Attr <- Attrs
-    ].
+    ok.  % Nothing to do
 
 -spec lookup_reg_id(reg_id_key()) -> push_reg_list().
 lookup_reg_id(ID) ->
