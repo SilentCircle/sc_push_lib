@@ -26,15 +26,25 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, set/2, get/1, get/2, delete/1]).
+-export([start_link/0,
+         set/2,
+         get/1,
+         get/2,
+         get_all_keys/0,
+         get_all_values/0,
+         select/1,
+         delete/1,
+         delete_keys/1,
+         delete_all/0
+        ]).
 
 %% gen_server callbacks
 -export([init/1,
-        handle_call/3,
-        handle_cast/2,
-        handle_info/2,
-        terminate/2,
-        code_change/3]).
+         handle_call/3,
+         handle_cast/2,
+         handle_info/2,
+         terminate/2,
+         code_change/3]).
 
 -define(SERVER, ?MODULE).
 
@@ -75,10 +85,56 @@ get(K, Def) ->
 delete(K) ->
     gen_server:call(?SERVER, {delete, K}).
 
+%% @doc Get all keys
+-spec get_all_keys() -> list().
+get_all_keys() ->
+    gen_server:call(?SERVER, get_all_keys).
+
+%% @doc Get all values
+-spec get_all_values() -> list().
+get_all_values() ->
+    gen_server:call(?SERVER, get_all_values).
+
+%%--------------------------------------------------------------------
+%% @doc Select multiple values matching a key. The key may contain wildcards,
+%% defined as the atom `` '_' ''. There is no prefix matching such as `` 'foo_'
+%% ''. To match part of a key that is a tuple, put wildcards in the "don't
+%% care" positions of the tuple. The arity of the tuple must be correct.
+%%
+%% === Examples ===
+%%
+%% <ul>
+%% <li>`` select('_') '' is the same as `get_all_values()'.</li>
+%% <li>`` select({foo,'_'}) '' will select all keys that are 2-element
+%% tuples whose first element is `` 'foo' ''</li>
+%% </ul>
+%% @end
+%%--------------------------------------------------------------------
+-spec select(K) -> Values when
+      K :: any(), Values :: [any()].
+select(K) ->
+    gen_server:call(?SERVER, {select, K}).
+
+%%--------------------------------------------------------------------
+%% @doc Delete multiple values matching a key. The key may contain wildcards,
+%% defined as the atom `` '_' ''. There is no prefix matching such as `` 'foo_'
+%% ''. To match part of a key that is a tuple, put wildcards in the "don't
+%% care" positions of the tuple. The arity of the tuple must be correct.
+%%
+%% The deletion will be performed atomically.
+%%--------------------------------------------------------------------
+-spec delete_keys(K) -> ok when K :: any().
+delete_keys(K) ->
+    gen_server:call(?SERVER, {delete_keys, K}).
+
+%%--------------------------------------------------------------------
+-spec delete_all() -> ok.
+delete_all() ->
+    gen_server:call(?SERVER, delete_all).
+
 %%--------------------------------------------------------------------
 %% @doc
 %% Starts the server
-%%
 %% @end
 %%--------------------------------------------------------------------
 -spec start_link() -> {ok, pid()} | ignore | {error, term()}.
@@ -132,8 +188,23 @@ handle_call({set, {K, V}}, _From, State) ->
 handle_call({get, K}, _From, State) ->
     Reply = get_config(K),
     {reply, Reply, State};
+handle_call(get_all_keys, _From, State) ->
+    Reply = get_all_config_keys(),
+    {reply, Reply, State};
+handle_call(get_all_values, _From, State) ->
+    Reply = get_all_config_values(),
+    {reply, Reply, State};
+handle_call({select, K}, _From, State) ->
+    Reply = select_config_values(K),
+    {reply, Reply, State};
 handle_call({delete, K}, _From, State) ->
     Reply = delete_config(K),
+    {reply, Reply, State};
+handle_call({delete_keys, K}, _From, State) ->
+    Reply = delete_config_keys(K),
+    {reply, Reply, State};
+handle_call(delete_all, _From, State) ->
+    Reply = delete_all_config_values(),
     {reply, Reply, State};
 handle_call(_Request, _From, State) ->
     Reply = {error, bad_request},
@@ -231,9 +302,11 @@ create_tables(Nodes) ->
                 ok
     end.
 
+%%--------------------------------------------------------------------
 set_config(K, V) ->
     ok = mnesia:dirty_write(#sc_config{key = K, value = V}).
 
+%%--------------------------------------------------------------------
 get_config(K) ->
     case mnesia:dirty_read(sc_config, K) of
         [] ->
@@ -242,6 +315,39 @@ get_config(K) ->
             R#sc_config.value
     end.
 
+%%--------------------------------------------------------------------
+get_all_config_keys() ->
+    mnesia:dirty_all_keys(sc_config).
+
+%%--------------------------------------------------------------------
+get_all_config_values() ->
+    mnesia:dirty_select(sc_config,
+                        [{#sc_config{value='$1',_='_'},[],['$1']}]).
+
+%%--------------------------------------------------------------------
+select_config_values(KeySpec) ->
+    mnesia:dirty_select(sc_config,
+                        [{#sc_config{key=KeySpec,value='$1'},[],['$1']}]).
+
+%%--------------------------------------------------------------------
 delete_config(K) ->
     mnesia:dirty_delete({sc_config, K}).
+
+%%--------------------------------------------------------------------
+delete_config_keys(KeySpec) ->
+    Txn = fun() ->
+                  Recs = mnesia:select(sc_config,
+                                       [{#sc_config{key=KeySpec, _='_'},[],
+                                         ['$_']}], write),
+                  _ = [ok = mnesia:delete(sc_config, R#sc_config.key, write)
+                       || R <- Recs],
+                  ok
+          end,
+    {atomic, ok} = mnesia:transaction(Txn),
+    ok.
+
+%%--------------------------------------------------------------------
+delete_all_config_values() ->
+    {atomic, ok} = mnesia:clear_table(sc_config),
+    ok.
 

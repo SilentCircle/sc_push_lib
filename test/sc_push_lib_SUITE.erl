@@ -13,35 +13,11 @@
 %%--------------------------------------------------------------------
 
 %%--------------------------------------------------------------------
-%% Function: suite() -> Info
-%%
-%% Info = [tuple()]
-%%   List of key/value pairs.
-%%
-%% Description: Returns list of tuples to set default properties
-%%              for the suite.
-%%
-%% Note: The suite/0 function is only meant to be used to return
-%% default data values, not perform any other operations.
-%%--------------------------------------------------------------------
 suite() -> [
         {timetrap, {seconds, 30}},
         {require, registration}
     ].
 
-%%--------------------------------------------------------------------
-%% Function: init_per_suite(Config0) ->
-%%               Config1 | {skip,Reason} | {skip_and_save,Reason,Config1}
-%%
-%% Config0 = Config1 = [tuple()]
-%%   A list of key/value pairs, holding the test case configuration.
-%% Reason = term()
-%%   The reason for skipping the suite.
-%%
-%% Description: Initialization before the suite.
-%%
-%% Note: This function is free to add any key/value pairs to the Config
-%% variable, but should NOT alter/remove any existing entries.
 %%--------------------------------------------------------------------
 init_per_suite(Config) ->
     Registration = ct:get_config(registration),
@@ -49,61 +25,17 @@ init_per_suite(Config) ->
     [{registration, Registration} | Config].
 
 %%--------------------------------------------------------------------
-%% Function: end_per_suite(Config0) -> void() | {save_config,Config1}
-%%
-%% Config0 = Config1 = [tuple()]
-%%   A list of key/value pairs, holding the test case configuration.
-%%
-%% Description: Cleanup after the suite.
-%%--------------------------------------------------------------------
 end_per_suite(_Config) ->
     ok.
 
-%%--------------------------------------------------------------------
-%% Function: init_per_group(GroupName, Config0) ->
-%%               Config1 | {skip,Reason} | {skip_and_save,Reason,Config1}
-%%
-%% GroupName = atom()
-%%   Name of the test case group that is about to run.
-%% Config0 = Config1 = [tuple()]
-%%   A list of key/value pairs, holding configuration data for the group.
-%% Reason = term()
-%%   The reason for skipping all test cases and subgroups in the group.
-%%
-%% Description: Initialization before each test case group.
 %%--------------------------------------------------------------------
 init_per_group(_GroupName, Config) ->
     Config.
 
 %%--------------------------------------------------------------------
-%% Function: end_per_group(GroupName, Config0) ->
-%%               void() | {save_config,Config1}
-%%
-%% GroupName = atom()
-%%   Name of the test case group that is finished.
-%% Config0 = Config1 = [tuple()]
-%%   A list of key/value pairs, holding configuration data for the group.
-%%
-%% Description: Cleanup after each test case group.
-%%--------------------------------------------------------------------
 end_per_group(_GroupName, _Config) ->
     ok.
 
-%%--------------------------------------------------------------------
-%% Function: init_per_testcase(TestCase, Config0) ->
-%%               Config1 | {skip,Reason} | {skip_and_save,Reason,Config1}
-%%
-%% TestCase = atom()
-%%   Name of the test case that is about to run.
-%% Config0 = Config1 = [tuple()]
-%%   A list of key/value pairs, holding the test case configuration.
-%% Reason = term()
-%%   The reason for skipping the test case.
-%%
-%% Description: Initialization before each test case.
-%%
-%% Note: This function is free to add any key/value pairs to the Config
-%% variable, but should NOT alter/remove any existing entries.
 %%--------------------------------------------------------------------
 init_per_testcase(_Case, Config) ->
     PrivDir = value(priv_dir, Config), % Standard CT variable
@@ -118,18 +50,6 @@ init_per_testcase(_Case, Config) ->
     [Started | proplists:delete(apps, Config)].
 
 %%--------------------------------------------------------------------
-%% Function: end_per_testcase(TestCase, Config0) ->
-%%               void() | {save_config,Config1} | {fail,Reason}
-%%
-%% TestCase = atom()
-%%   Name of the test case that is finished.
-%% Config0 = Config1 = [tuple()]
-%%   A list of key/value pairs, holding the test case configuration.
-%% Reason = term()
-%%   The reason for failing the test case.
-%%
-%% Description: Cleanup after each test case.
-%%--------------------------------------------------------------------
 end_per_testcase(_Case, Config) ->
     Apps = lists:reverse(value(apps, Config)),
     ct:pal("Config:~n~p~n", [Config]),
@@ -138,26 +58,6 @@ end_per_testcase(_Case, Config) ->
     ok = mnesia:delete_schema([node()]),
     Config.
 
-%%--------------------------------------------------------------------
-%% Function: groups() -> [Group]
-%%
-%% Group = {GroupName,Properties,GroupsAndTestCases}
-%% GroupName = atom()
-%%   The name of the group.
-%% Properties = [parallel | sequence | Shuffle | {RepeatType,N}]
-%%   Group properties that may be combined.
-%% GroupsAndTestCases = [Group | {group,GroupName} | TestCase]
-%% TestCase = atom()
-%%   The name of a test case.
-%% Shuffle = shuffle | {shuffle,Seed}
-%%   To get cases executed in random order.
-%% Seed = {integer(),integer(),integer()}
-%% RepeatType = repeat | repeat_until_all_ok | repeat_until_all_fail |
-%%              repeat_until_any_ok | repeat_until_any_fail
-%%   To get execution of cases repeated.
-%% N = integer() | forever
-%%
-%% Description: Returns a list of test case group definitions.
 %%--------------------------------------------------------------------
 groups() ->
     [
@@ -202,24 +102,16 @@ groups() ->
             sc_config,
             [],
             [
-                sc_config_test
+                sc_config_test,
+                sc_config_select_test,
+                sc_config_delete_test,
+                sc_config_get_all_keys_test,
+                sc_config_get_all_values_test,
+                sc_config_delete_all_test
             ]
         }
     ].
 
-%%--------------------------------------------------------------------
-%% Function: all() -> GroupsAndTestCases | {skip,Reason}
-%%
-%% GroupsAndTestCases = [{group,GroupName} | TestCase]
-%% GroupName = atom()
-%%   Name of a test case group.
-%% TestCase = atom()
-%%   Name of a test case.
-%% Reason = term()
-%%   The reason for skipping all groups and test cases.
-%%
-%% Description: Returns the list of groups and test cases that
-%%              are to be executed.
 %%--------------------------------------------------------------------
 all() ->
     [
@@ -251,6 +143,7 @@ make_id_test(_Config) ->
     ExpectedID = {DeviceID, Tag},
     ok.
 
+%%--------------------------------------------------------------------
 make_svc_tok_test(doc) ->
     ["sc_push_reg_api:make_svc_tok/2 should create a canonical registration svc_tok"];
 make_svc_tok_test(suite) ->
@@ -264,6 +157,7 @@ make_svc_tok_test(_Config) ->
     ExpectedID = sc_push_reg_api:make_svc_tok(atom_to_list(ExpSvc), binary_to_list(ExpToken)),
     ok.
 
+%%--------------------------------------------------------------------
 is_valid_push_reg_test(doc) ->
     ["sc_push_reg_api:is_valid_push_reg/1 should validate proplist"];
 is_valid_push_reg_test(suite) ->
@@ -287,6 +181,7 @@ is_valid_push_reg_test(Config) ->
 
     Config.
 
+%%--------------------------------------------------------------------
 make_push_props_test(doc) ->
     ["Test sc_push_reg_db:make_sc_push_props/8"];
 make_push_props_test(suite) ->
@@ -332,6 +227,7 @@ make_push_props_test(Config) ->
 
     Config.
 
+%%--------------------------------------------------------------------
 register_id_test(doc) ->
     ["sc_push_reg_api:register_id/1 should register a 'device'"];
 register_id_test(suite) ->
@@ -344,6 +240,7 @@ register_id_test(Config) ->
     ct:pal("Registered ~p~n", [RegPL]),
     deregister_id(RegPL).
 
+%%--------------------------------------------------------------------
 reregister_id_test(doc) ->
     ["sc_push_reg_api:reregister_id/2 should reregister an existing reg with a new token"];
 reregister_id_test(suite) ->
@@ -377,6 +274,7 @@ reregister_id_test(Config) ->
     deregister_id(RegPL),
     deregister_id(NewRegPL).
 
+%%--------------------------------------------------------------------
 register_ids_test(doc) ->
     ["sc_push_reg_api:register_ids/1 should register a 'device'"];
 register_ids_test(suite) ->
@@ -388,6 +286,7 @@ register_ids_test(Config) ->
     deregister_ids([RegPL]),
     ok.
 
+%%--------------------------------------------------------------------
 register_ids_bad_id_test(doc) ->
     ["sc_push_reg_api:register_ids/1 should fail due to bad input"];
 register_ids_bad_id_test(suite) ->
@@ -401,6 +300,7 @@ register_ids_bad_id_test(_Config) ->
     ct:pal("register_ids correctly identified bad input~n", []),
     ok.
 
+%%--------------------------------------------------------------------
 deregister_ids_bad_id_test(doc) ->
     ["sc_push_reg_api:deregister_ids/1 should fail due to bad input"];
 deregister_ids_bad_id_test(suite) ->
@@ -412,6 +312,7 @@ deregister_ids_bad_id_test(Config) ->
     ct:pal("deregister_ids correctly identified bad input~n", []),
     Config.
 
+%%--------------------------------------------------------------------
 all_registration_info_test(doc) ->
     ["sc_push_reg_api:all_registration_info/1 should get all reg info"];
 all_registration_info_test(suite) ->
@@ -424,6 +325,7 @@ all_registration_info_test(Config) ->
     deregister_ids(RegPLs),
     Config.
 
+%%--------------------------------------------------------------------
 get_registration_info_test(doc) ->
     ["sc_push_reg_api:get_registration_info/1 should get the correct reg info for a tag"];
 get_registration_info_test(suite) ->
@@ -445,6 +347,7 @@ get_registration_info_test(Config) ->
     ct:pal("Got reginfo for tag ~p:~n~p", [NewTag, NewRegPL]),
     deregister_id(RegPL).
 
+%%--------------------------------------------------------------------
 get_registration_info_by_tag_test(doc) ->
     ["sc_push_reg_api:get_registration_info_by_tag/1 should get the correct reg info for a reg tag"];
 get_registration_info_by_tag_test(suite) ->
@@ -465,6 +368,7 @@ get_registration_info_by_tag_test(Config) ->
     ct:pal("Got reginfo for ID ~p:~n~p", [NewTag, NewRegPL]),
     deregister_id(RegPL).
 
+%%--------------------------------------------------------------------
 get_registration_info_by_svc_tok_test(doc) ->
     ["sc_push_reg_api:get_registration_info_by_svc_tok/1 should get the correct reg info for service+token"];
 get_registration_info_by_svc_tok_test(suite) ->
@@ -485,6 +389,7 @@ get_registration_info_by_svc_tok_test(Config) ->
     ct:pal("Got reginfo for svc/tok ~p/~p:~n~p", [NewSvc, NewTok, NewRegPL]),
     deregister_id(RegPL).
 
+%%--------------------------------------------------------------------
 get_registration_info_by_id_test(doc) ->
     ["sc_push_reg_api:get_registration_info_by_id/1 should get the correct reg info for a single device ID"];
 get_registration_info_by_id_test(suite) ->
@@ -504,6 +409,7 @@ get_registration_info_by_id_test(Config) ->
     ct:pal("Got reginfo for ID ~p:~n~p", [NewID, NewRegPL]),
     deregister_id(RegPL).
 
+%%--------------------------------------------------------------------
 get_registration_info_by_device_id_test(doc) ->
     ["sc_push_reg_api:get_registration_info_by_device_id/1 should"
      "get the correct reg info for a single device ID"];
@@ -538,6 +444,7 @@ get_registration_info_by_device_id_test(Config) ->
     [ok = sc_push_reg_api:deregister_device_id(ID) || ID <- IDs],
     ct:pal("Deregistered IDs ~p~n", [IDs]).
 
+%%--------------------------------------------------------------------
 get_registration_info_not_found_test(doc) ->
     ["sc_push_reg_api:get_registration_info/1 should not find this reg info"];
 get_registration_info_not_found_test(suite) ->
@@ -548,6 +455,7 @@ get_registration_info_not_found_test(Config) ->
     ct:pal("Got expected 'notfound' result for tag ~p~n", [FakeTag]),
     Config.
 
+%%--------------------------------------------------------------------
 get_registration_info_by_id_not_found_test(doc) ->
     ["sc_push_reg_api:get_registration_info_by_id/1 should not find this reg info"];
 get_registration_info_by_id_not_found_test(suite) ->
@@ -657,6 +565,72 @@ sc_config_test(Config) ->
     undefined = sc_config:get(Key),
     my_default = sc_config:get(Key, my_default),
     try_bad_gen_server_req(sc_config),
+    Config.
+
+%%--------------------------------------------------------------------
+sc_config_select_test(doc) ->
+    ["test sc_config:select"];
+sc_config_select_test(suite) ->
+    [];
+sc_config_select_test(Config) ->
+    Foo = [{{foo, V}, {fooval, V}} || V <- lists:seq(1, 50)],
+    Bar = [{{bar, V}, {barval, V}} || V <- lists:seq(51, 100)],
+    BarVals = lists:sort([V || {_, V} <- Bar]),
+    _ = [ok = sc_config:set(K, V) || {K, V} <- Foo ++ Bar],
+    BarVals = lists:sort(sc_config:select({bar, '_'})),
+    Config.
+
+%%--------------------------------------------------------------------
+sc_config_delete_test(doc) ->
+    ["test sc_config:delete_keys"];
+sc_config_delete_test(suite) ->
+    [];
+sc_config_delete_test(Config) ->
+    Foo = [{{foo, V}, {fooval, V}} || V <- lists:seq(1, 50)],
+    Bar = [{{bar, V}, {barval, V}} || V <- lists:seq(51, 100)],
+    BarVals = lists:sort([V || {_, V} <- Bar]),
+    _ = [ok = sc_config:set(K, V) || {K, V} <- Foo ++ Bar],
+    BarVals = lists:sort(sc_config:select({bar, '_'})),
+    ok = sc_config:delete_keys({bar, '_'}),
+    [] = sc_config:select({bar, '_'}),
+    Config.
+
+%%--------------------------------------------------------------------
+sc_config_get_all_keys_test(doc) ->
+    ["test sc_config:get_all_keys"];
+sc_config_get_all_keys_test(suite) ->
+    [];
+sc_config_get_all_keys_test(Config) ->
+    Foo = [{{foo, V}, {fooval, V}} || V <- lists:seq(1, 50)],
+    Bar = [{{bar, V}, {barval, V}} || V <- lists:seq(51, 100)],
+    _ = [ok = sc_config:set(K, V) || {K, V} <- Foo ++ Bar],
+    AllKeys = lists:sort([K || {K, _} <- Foo ++ Bar]),
+    AllKeys = lists:sort(sc_config:get_all_keys()),
+    Config.
+
+%%--------------------------------------------------------------------
+sc_config_get_all_values_test(doc) ->
+    ["test sc_config:get_all_values"];
+sc_config_get_all_values_test(suite) ->
+    [];
+sc_config_get_all_values_test(Config) ->
+    Foo = [{{foo, V}, {fooval, V}} || V <- lists:seq(1, 50)],
+    Bar = [{{bar, V}, {barval, V}} || V <- lists:seq(51, 100)],
+    _ = [ok = sc_config:set(K, V) || {K, V} <- Foo ++ Bar],
+    AllValues = lists:sort([V || {_, V} <- Foo ++ Bar]),
+    AllValues = lists:sort(sc_config:get_all_values()),
+    Config.
+
+%%--------------------------------------------------------------------
+sc_config_delete_all_test(doc) ->
+    ["test sc_config:delete_all"];
+sc_config_delete_all_test(suite) ->
+    [];
+sc_config_delete_all_test(Config) ->
+    Foo = [{{foo, V}, {fooval, V}} || V <- lists:seq(1, 50)],
+    _ = [ok = sc_config:set(K, V) || {K, V} <- Foo],
+    ok = sc_config:delete_all(),
+    [] = sc_config:get_all_keys(),
     Config.
 
 %%====================================================================
