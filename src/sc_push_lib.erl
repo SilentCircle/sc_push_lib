@@ -26,7 +26,8 @@
 -export([
         register_service/1,
         unregister_service/1,
-        get_service_config/1
+        get_service_config/1,
+        get_all_service_configs/0
     ]).
 
 %%--------------------------------------------------------------------
@@ -66,4 +67,13 @@ get_service_config(Service) ->
         undefined ->
             {error, {unregistered_service, Service}}
     end.
+
+
+%%--------------------------------------------------------------------
+%% @doc Get all service configs.
+%% @end
+%%--------------------------------------------------------------------
+-spec get_all_service_configs() -> [std_proplist()].
+get_all_service_configs() ->
+    sc_config:select({service, '_'}).
 
