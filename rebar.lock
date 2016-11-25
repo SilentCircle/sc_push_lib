@@ -16,5 +16,5 @@
   0},
  {<<"sc_util">>,
   {git,"git@github.com:SilentCircle/sc_util.git",
-       {ref,"86c1369b381d5c5f329a94f90f03ed059ae1ed95"}},
+       {ref,"7a0a7579e8b9ceed387364d5376123d95f252ec0"}},
   0}].
