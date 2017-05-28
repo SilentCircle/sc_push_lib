@@ -30,11 +30,14 @@ info:
 compile: $(REBAR)
 	$(REBAR) do clean, compile
 
+run: compile
+	$(REBAR) shell --name sc_push_lib --setcookie scpf --config config/shell.config --apps sc_push_lib
+
 clean: $(REBAR) docclean
 	$(REBAR) clean
 
 ct: $(REBAR)
-	REBAR_DIR=$(CURDIR) $(REBAR) do clean, ct --readable
+	REBAR_DIR=$(CURDIR) $(REBAR) do clean, ct --readable, cover -v
 
 ct_clean:
 	@rm -rf _build/test/logs/

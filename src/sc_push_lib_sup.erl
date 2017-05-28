@@ -35,10 +35,7 @@
 %% ===================================================================
 
 start_link() ->
-    ok = db_init(),
-    _ = lager:info("Initializing push registration API", []),
-    ok = sc_push_reg_api:init(),
-    _ = lager:info("Push registration API ready", []),
+    {ok, _MnesiaDir} = internal_db_init(),
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %% ===================================================================
@@ -47,41 +44,71 @@ start_link() ->
 
 init([]) ->
     {ok, { {one_for_one, 5, 10},
-           [
+           [?CHILD(sc_push_reg_api, supervisor),
             ?CHILD(sc_config, worker),
             ?CHILD(sc_push_req_mgr, worker)
            ]}
     }.
 
--spec db_init() -> ok.
-db_init() ->
+-spec internal_db_init() -> Result when
+      Result :: {ok, Dir}, Dir :: string().
+internal_db_init() ->
     Me = node(),
-    lager:info("Initializing database on ~p", [Me]),
+    Dir = mnesia_dir(Me),
+    lager:debug("Mnesia database dir: ~p", [Dir]),
+    lager:debug("Initializing mnesia database on ~p", [Me]),
+
+    ensure_schema(Me),
+    ensure_correct_node(Me, mnesia:system_info(db_nodes)),
+    lager:info("Starting mnesia database in dir ~p on node ~p", [Dir, Me]),
+    ok = mnesia:start(),
+    lager:info("Waiting for mnesia tables on node ~p", [Me]),
+    mnesia:wait_for_tables(mnesia:system_info(local_tables), infinity),
+    lager:info("Mnesia database started on ~p", [Me]),
     mnesia:stop(),
-    DbNodes = mnesia:system_info(db_nodes),
-    case lists:member(Me, DbNodes) of
+    {ok, Dir}.
+
+
+ensure_correct_node(Node, DbNodes) ->
+    case lists:member(Node, DbNodes) of
         true ->
             ok;
         false ->
             lager:error("Node name mismatch: This node is [~s], "
-                        "the database is owned by ~p", [Me, DbNodes]),
+                        "the database is owned by ~p", [Node, DbNodes]),
             erlang:error(node_name_mismatch)
-    end,
+    end.
+
+ensure_schema(Node) ->
     case mnesia:system_info(use_dir) of % Is there a disc-based schema?
         false ->
-            lager:info("About to create schema on ~p", [Me]),
-            case mnesia:create_schema([Me]) of
+            lager:info("About to create mnesia schema on ~p", [Node]),
+            mnesia:stop(),
+            case mnesia:create_schema([Node]) of
                 ok ->
-                    lager:info("Created database schema on ~p", [Me]);
-                {error, {Me, {already_exists, Me}}} ->
-                    lager:info("Schema already exists on ~p", [Me])
+                    lager:info("Created mnesia database schema on ~p", [Node]);
+                {error, {Node, {already_exists, Node}}} ->
+                    lager:debug("mnesia schema already exists on ~p", [Node])
             end;
         true ->
-            lager:info("No schema creation required.")
+            ok
     end,
-    lager:info("Starting database on ~p", [Me]),
-    ok = mnesia:start(),
-    mnesia:wait_for_tables(mnesia:system_info(local_tables), infinity),
-    lager:info("Database initialized on ~p", [Me]),
-    ok.
+    mnesia:start(),
+    case mnesia:table_info(schema, disc_copies) of
+        [] ->
+            {atomic, ok} = mnesia:change_table_copy_type(schema, Node,
+                                                         disc_copies);
+        [_|_] = L ->
+            true = lists:member(Node, L)
+    end,
+    mnesia:stop().
 
+mnesia_dir(Node) ->
+    case application:get_env(mnesia, dir) of
+        undefined ->
+            D = "Mnesia." ++ atom_to_list(Node),
+            application:set_env(mnesia, dir, D),
+            D;
+        {ok, D} ->
+            D
+    end.
