@@ -28,6 +28,7 @@
                 syntax_tools,
                 goldrush,
                 lager,
+                epgsql,
                 sc_util
             ]},
         {mod, { sc_push_lib_app, [
@@ -36,6 +37,7 @@
                     sc_push_reg_api,
                     sc_push_req_mgr,
                     sc_push_req_db,
+                    sc_push_req_db_mnesia,
                     sc_config
                 ]}},
         {env, []}

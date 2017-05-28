@@ -30,6 +30,7 @@
     deregister_svc_toks/1,
     deregister_device_id/1,
     deregister_device_ids/1,
+    update_invalid_timestamp_by_svc_tok/2,
     all_registration_info/0,
     get_registration_info/1,
     get_registration_info_by_id/1,
@@ -147,6 +148,21 @@ deregister_svc_tok({_, <<>>}) ->
 deregister_svc_tok({_, <<_/binary>>} = SvcTok) ->
     try
         sc_push_reg_db:delete_push_regs_by_svc_toks([make_svc_tok(SvcTok)])
+    catch
+        _:Reason ->
+            {error, Reason}
+    end.
+
+%% @doc Deregister registrations with service+push token and
+%% deregistration timestamp (only APNS provides timestamps at present.
+%% Timestamps from APN are in millseconds since the epoch.
+-spec update_invalid_timestamp_by_svc_tok(SvcTok, Timestamp) -> ok | {error, term()}
+    when SvcTok :: sc_push_reg_db:svc_tok_key(), Timestamp :: non_neg_integer().
+update_invalid_timestamp_by_svc_tok({_, <<>>}, _Timestamp) ->
+    {error, empty_token};
+update_invalid_timestamp_by_svc_tok({_, <<_/binary>>} = SvcTok, Timestamp) when is_integer(Timestamp) ->
+    try
+        sc_push_reg_db:update_invalid_timestamps_by_svc_toks([{make_svc_tok(SvcTok), Timestamp}])
     catch
         _:Reason ->
             {error, Reason}

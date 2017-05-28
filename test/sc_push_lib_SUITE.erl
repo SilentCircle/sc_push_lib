@@ -44,6 +44,8 @@ init_per_testcase(_Case, Config) ->
     _ = application:load(lager),
     [ok = application:set_env(lager, K, V) || {K, V} <- lager_config(Config)],
     ok = application:set_env(mnesia, dir, MnesiaDir),
+    mnesia:stop(),
+    mnesia:delete_schema([node()]),
     ok = mnesia:create_schema([node()]),
     {ok, Apps} = application:ensure_all_started(sc_push_lib),
     Started = {apps, [sasl | Apps]},
@@ -81,7 +83,8 @@ groups() ->
                 get_registration_info_by_tag_test,
                 get_registration_info_by_svc_tok_test,
                 get_registration_info_by_id_not_found_test,
-                get_registration_info_not_found_test
+                get_registration_info_not_found_test,
+                update_last_invalid_test
             ]
         },
         {
@@ -193,28 +196,27 @@ make_push_props_test(Config) ->
     AppId = <<"my_app_id">>,
     Dist = <<"prod">>,
     DeviceId = <<"test_device_id">>,
-    Version = 1,
     Modified = erlang:timestamp(),
 
     Props = sc_push_reg_db:make_sc_push_props(Service, Token, DeviceId, Tag,
-                                              AppId, Dist, Version, Modified),
+                                              AppId, Dist, Modified),
     Service = value(service, Props),
     Token = value(token, Props),
     Tag = value(tag, Props),
     AppId = value(app_id, Props),
     Dist = value(dist, Props),
     DeviceId = value(device_id, Props),
-    Version = value(version, Props),
     Modified = value(modified, Props),
+    LastInvalidOn = value(last_invalid_on, Props),
 
-    %% Check that it will work from strings, too (except version and modified)
+    %% Check that it will work from strings, too (except modified)
     Props1 = sc_push_reg_db:make_sc_push_props(atom_to_list(Service),
                                                binary_to_list(Token),
                                                binary_to_list(DeviceId),
                                                binary_to_list(Tag),
                                                binary_to_list(AppId),
                                                binary_to_list(Dist),
-                                               Version, Modified
+                                               Modified, LastInvalidOn
                                            ),
     Service = value(service, Props1),
     Token = value(token, Props1),
@@ -222,8 +224,8 @@ make_push_props_test(Config) ->
     AppId = value(app_id, Props1),
     Dist = value(dist, Props1),
     DeviceId = value(device_id, Props1),
-    Version = value(version, Props1),
     Modified = value(modified, Props1),
+    LastInvalidOn = value(last_invalid_on, Props1),
 
     Config.
 
@@ -467,6 +469,29 @@ get_registration_info_by_id_not_found_test(Config) ->
     Config.
 
 %%--------------------------------------------------------------------
+update_last_invalid_test(doc) ->
+    ["sc_push_reg_api:update_invalid_timestamp_by_svc_tok/2",
+     "should update the last_invalid_on timestamp."];
+update_last_invalid_test(suite) ->
+    [];
+update_last_invalid_test(Config) ->
+    RegPL = value(registration, Config),
+    Result = sc_push_reg_api:register_id(RegPL),
+    ct:pal("register_id returned ~p~n", [Result]),
+    ok = Result,
+    ct:pal("Registered ~p~n", [RegPL]),
+    TimestampMs = erlang:system_time(milli_seconds),
+    SvcTok = svc_token_from_reg_props(RegPL),
+    ok = sc_push_reg_api:update_invalid_timestamp_by_svc_tok(SvcTok,
+                                                             TimestampMs),
+
+    [NewRegPL] = sc_push_reg_api:get_registration_info_by_svc_tok(SvcTok),
+    StoredTs = value(last_invalid_on, NewRegPL),
+    ?assertEqual(StoredTs, from_posix_time_ms(TimestampMs)),
+
+    deregister_id(RegPL).
+
+%%--------------------------------------------------------------------
 %% Group: sc_push_lib
 %%--------------------------------------------------------------------
 sc_push_lib_test(doc) ->
@@ -651,6 +676,11 @@ id_from_reg_props(RegPL) ->
     Tag = value(tag, RegPL),
     sc_push_reg_api:make_id(DeviceID, Tag).
 
+svc_token_from_reg_props(RegPL) ->
+    Svc = value(service, RegPL),
+    Token = value(token, RegPL),
+    sc_push_reg_api:make_svc_tok(Svc, Token).
+
 try_bad_gen_server_req(SvrRef) ->
     % Try a bad request
     {error, bad_request} = gen_server:call(SvrRef, {foobar, baz}),
@@ -738,10 +768,14 @@ sorted_reg_pls_equal([], []) ->
 sorted_reg_pls_equal(PLs1, PLs2) ->
     throw({unequal_list_of_proplists, PLs1, PLs2}).
 
-%% Don't compare version and modified because those are guaranteed to be changed
+%% Don't compare modified because those are guaranteed to be changed
 %% every time the record is written.
 reg_pl_equal(PL1, PL2) ->
     lists:all(fun(K) -> proplists:get_value(K, PL1) =:= proplists:get_value(K, PL2) end,
               [service, token, tag, app_id, dist, id]).
+
+%%--------------------------------------------------------------------
+from_posix_time_ms(TimestampMs) ->
+    sc_push_reg_db:from_posix_time_ms(TimestampMs).
 
 
