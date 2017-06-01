@@ -35,10 +35,7 @@
 %% ===================================================================
 
 start_link() ->
-    ok = db_init(),
-    _ = lager:info("Initializing push registration API", []),
-    ok = sc_push_reg_api:init(),
-    _ = lager:info("Push registration API ready", []),
+    {ok, _MnesiaDir} = internal_db_init(),
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %% ===================================================================
@@ -47,18 +44,29 @@ start_link() ->
 
 init([]) ->
     {ok, { {one_for_one, 5, 10},
-           [
+           [?CHILD(sc_push_reg_db, worker),
             ?CHILD(sc_config, worker),
             ?CHILD(sc_push_req_mgr, worker)
            ]}
     }.
 
--spec db_init() -> ok.
-db_init() ->
+-spec internal_db_init() -> ok.
+internal_db_init() ->
     Me = node(),
-    lager:info("Initializing database on ~p", [Me]),
+    Dir = case application:get_env(mnesia, dir) of
+              undefined ->
+                  D = "Mnesia." ++ atom_to_list(Me),
+                  application:set_env(mnesia, dir, D),
+                  D;
+              {ok, D} ->
+                  D
+          end,
+    lager:info("Mnesia database dir: ~p", [Dir]),
+    lager:info("Initializing mnesia database on ~p", [Me]),
+
     mnesia:stop(),
     DbNodes = mnesia:system_info(db_nodes),
+
     case lists:member(Me, DbNodes) of
         true ->
             ok;
@@ -72,16 +80,17 @@ db_init() ->
             lager:info("About to create schema on ~p", [Me]),
             case mnesia:create_schema([Me]) of
                 ok ->
-                    lager:info("Created database schema on ~p", [Me]);
+                    lager:info("Created mnesia database schema on ~p", [Me]);
                 {error, {Me, {already_exists, Me}}} ->
-                    lager:info("Schema already exists on ~p", [Me])
+                    lager:info("mnesia schema already exists on ~p", [Me])
             end;
         true ->
-            lager:info("No schema creation required.")
+            lager:info("No mnesia schema creation required.")
     end,
-    lager:info("Starting database on ~p", [Me]),
+    lager:info("Starting mnesia database in dir ~p on node ~p", [Dir, Me]),
     ok = mnesia:start(),
     mnesia:wait_for_tables(mnesia:system_info(local_tables), infinity),
     lager:info("Database initialized on ~p", [Me]),
-    ok.
+    mnesia:stop(),
+    {ok, Dir}.
 

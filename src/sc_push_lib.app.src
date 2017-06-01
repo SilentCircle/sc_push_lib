@@ -23,7 +23,6 @@
                 kernel,
                 stdlib,
                 sasl,
-                mnesia,
                 compiler,
                 syntax_tools,
                 goldrush,
@@ -31,13 +30,14 @@
                 epgsql,
                 sc_util
             ]},
+        {included_applications, [mnesia]},
         {mod, { sc_push_lib_app, [
                     sc_push_lib,
                     sc_push_lib_sup,
                     sc_push_reg_api,
+                    sc_push_reg_db,
+                    sc_push_reg_db_mnesia,
                     sc_push_req_mgr,
-                    sc_push_req_db,
-                    sc_push_req_db_mnesia,
                     sc_config
                 ]}},
         {env, []}

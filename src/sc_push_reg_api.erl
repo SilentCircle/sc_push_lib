@@ -17,7 +17,6 @@
 -module(sc_push_reg_api).
 
 -export([
-    init/0,
     register_id/1,
     register_ids/1,
     reregister_id/2,
@@ -55,12 +54,6 @@
 %%====================================================================
 %% API
 %%====================================================================
-%% @doc Initialize API.
--spec init() -> ok.
-init() ->
-    _ = sc_push_reg_db:init([node()]),
-    ok.
-
 %% @doc Get registration info of all registered IDs. Note
 %% that in future, this may be limited to the first 100
 %% IDs found. It may also be supplemented by an API that
