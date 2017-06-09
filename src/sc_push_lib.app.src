@@ -27,6 +27,7 @@
                 syntax_tools,
                 goldrush,
                 lager,
+                poolboy,
                 epgsql,
                 sc_util
             ]},
@@ -37,6 +38,7 @@
                     sc_push_reg_api,
                     sc_push_reg_db,
                     sc_push_reg_db_mnesia,
+                    sc_push_reg_db_postgres,
                     sc_push_req_mgr,
                     sc_config
                 ]}},

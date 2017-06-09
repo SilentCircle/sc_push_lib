@@ -16,6 +16,8 @@
 
 -module(sc_push_reg_api).
 
+-behavior(supervisor).
+
 -export([
     register_id/1,
     register_ids/1,
@@ -43,24 +45,131 @@
     make_svc_tok/2
     ]).
 
+-export([init/1]).
+
 -include("sc_push_lib.hrl").
+
+-define(SPRDB, sc_push_reg_db).
+-define(DEFAULT_DB_MOD, sc_push_db_mnesia).
 
 %%--------------------------------------------------------------------
 %% Types
 %%--------------------------------------------------------------------
 -type atom_or_str() :: atom() | string().
 -type bin_or_str() :: binary() | string().
+-type ctx() :: term().
+
+%%--------------------------------------------------------------------
+%% Behavior callbacks
+%%--------------------------------------------------------------------
+-callback db_init(Config) -> {ok, Context} | {error, Reason}
+    when Config :: term(), Context :: ctx(), Reason :: term().
+
+
+-callback db_info() -> Info
+    when Info :: proplists:proplist().
+
+
+-callback db_terminate(Context) -> ok when
+      Context :: ctx().
+
+
+-callback all_reg() -> Result
+    when Result :: ?SPRDB:push_reg_list().
+
+
+-callback all_registration_info() -> Result
+    when Result :: [sc_types:reg_proplist()].
+
+
+-callback check_id(RegIdKey) -> Result
+    when RegIdKey :: ?SPRDB:reg_id_key(), Result :: ?SPRDB:reg_id_key().
+
+
+-callback check_ids(RegIdKeys) -> Result
+    when RegIdKeys :: ?SPRDB:reg_id_keys(), Result :: ?SPRDB:reg_id_keys().
+
+
+-callback create_tables(Config) -> any()
+    when Config :: any().
+
+
+-callback delete_push_regs_by_device_ids(Key) -> Result
+    when Key :: term(), Result :: term().
+
+
+-callback delete_push_regs_by_ids(Key) -> Result
+    when Key :: term(), Result :: term().
+
+
+-callback delete_push_regs_by_svc_toks(Key) -> Result
+    when Key :: term(), Result :: term().
+
+
+-callback update_invalid_timestamps_by_svc_toks(Key) -> Result
+    when Key :: term(), Result :: term().
+
+
+-callback delete_push_regs_by_tags(Key) -> Result
+    when Key :: term(), Result :: term().
+
+
+-callback get_registration_info_by_device_id(Key) -> Result
+    when Key :: term(), Result :: term().
+
+
+-callback get_registration_info_by_id(Key) -> Result
+    when Key :: term(), Result :: term().
+
+
+-callback get_registration_info_by_svc_tok(Key) -> Result
+    when Key :: term(), Result :: term().
+
+
+-callback get_registration_info_by_tag(Key) -> Result
+    when Key :: term(), Result :: term().
+
+
+-callback is_valid_push_reg(Key) -> Result
+    when Key :: term(), Result :: term().
+
+
+-callback reregister_ids(Ids) -> ok
+    when Ids :: [{?SPRDB:reg_id_key(), binary()}].
+
+
+-callback reregister_svc_toks(SvcToks) -> ok
+    when SvcToks :: [{?SPRDB:svc_tok_key(), binary()}].
+
+
+-callback save_push_regs(ListOfProplists) -> Result
+    when ListOfProplists :: [sc_types:reg_proplist(), ...],
+         Result :: ok | {error, term()}.
 
 %%====================================================================
 %% API
 %%====================================================================
+init([]) ->
+    {ok, App} = application:get_application(?MODULE),
+    {ok, DbMod} = application:get_env(App, db_mod, ?DEFAULT_DB_MOD),
+    _ = lager:info("Push registration db module is ~p", [DbMod]),
+    {ok, Pools} = application:get_env(App, db_pools),
+    _ = lager:info("Push registration db pools are ~p", [Pools]),
+    PoolSpecs = lists:map(fun({Name, SizeArgs, WorkerArgs}) ->
+        PoolArgs = [{name, {local, Name}},
+            		{worker_module, DbMod}] ++ SizeArgs,
+        poolboy:child_spec(Name, PoolArgs, WorkerArgs)
+    end, Pools),
+    {ok, {{one_for_one, 10, 10}, PoolSpecs}}.
+
+
 %% @doc Get registration info of all registered IDs. Note
 %% that in future, this may be limited to the first 100
 %% IDs found. It may also be supplemented by an API that
 %% supports getting the information in batches.
 -spec all_registration_info() -> [sc_types:reg_proplist()].
 all_registration_info() ->
-    sc_push_reg_db:all_registration_info().
+    poolboy:transaction(sc_push_reg_pool, fun ?SPRDB:all_registration_info/1).
 
 %% @doc Reregister a previously-registered identity, substituting a new token
 %% for the specified push service.

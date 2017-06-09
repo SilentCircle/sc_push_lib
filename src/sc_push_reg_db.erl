@@ -16,38 +16,46 @@
 
 -module(sc_push_reg_db).
 
+-behavior(poolboy_worker).
 -behavior(gen_server).
 
+%% Out of process API calls
 -export([
-         start_link/0,
-         start/0
+         all_reg/1,
+         all_registration_info/1,
+         check_id/2,
+         check_ids/2,
+         create_tables/2,
+         delete_push_regs_by_device_ids/2,
+         delete_push_regs_by_ids/2,
+         delete_push_regs_by_svc_toks/2,
+         delete_push_regs_by_tags/2,
+         update_invalid_timestamps_by_svc_toks/2,
+         get_registration_info_by_device_id/2,
+         get_registration_info_by_id/2,
+         get_registration_info_by_svc_tok/2,
+         get_registration_info_by_tag/2,
+         is_valid_push_reg/2,
+         reregister_ids/2,
+         reregister_svc_toks/2,
+         save_push_regs/2
         ]).
 
+% In-process API
 -export([
-         all_reg/0,
-         all_registration_info/0,
-         check_id/1,
-         check_ids/1,
-         create_tables/1,
-         delete_push_regs_by_device_ids/1,
-         delete_push_regs_by_ids/1,
-         delete_push_regs_by_svc_toks/1,
-         delete_push_regs_by_tags/1,
-         update_invalid_timestamps_by_svc_toks/1,
-         get_registration_info_by_device_id/1,
-         get_registration_info_by_id/1,
-         get_registration_info_by_svc_tok/1,
-         get_registration_info_by_tag/1,
-         is_valid_push_reg/1,
          make_id/2,
          make_sc_push_props/7,
          make_sc_push_props/8,
+         make_sc_push_props/9,
          make_svc_tok/2,
-         reregister_ids/1,
-         reregister_svc_toks/1,
-         save_push_regs/1,
          from_posix_time_ms/1
         ]).
+
+%% poolboy callback and debug start function
+-export([start_link/1]).
+
+%% debug start and stop functions
+-export([start/1, stop/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -57,12 +65,21 @@
          terminate/2,
          code_change/3]).
 
--define(SERVER, ?MODULE).
+-define(DEFAULT_DB_MOD, sc_push_reg_db_mnesia).
 
 -type terminate_reason() :: normal |
                             shutdown |
                             {shutdown, term()} |
                             term().
+
+-type name() :: atom().
+-type global_name() :: term().
+-type via_name() :: term().
+-type server_ref() :: name()
+                    | {name(), node()}
+                    | {global, global_name()}
+                    | {via, module(), via_name()}
+                    | pid().
 
 %%--------------------------------------------------------------------
 %% Types
@@ -85,103 +102,109 @@
 
 
 -export_type([
-        reg_id_key/0,
-        svc_tok_key/0,
-        atom_or_str/0,
-        atomable/0,
-        binable/0,
-        reg_id_keys/0,
-        reg_db_props/0
-        ]).
+              reg_id_key/0,
+              svc_tok_key/0,
+              atom_or_str/0,
+              atomable/0,
+              binable/0,
+              reg_id_keys/0,
+              reg_db_props/0,
+              push_reg_list/0
+             ]).
 
 -define(S, ?MODULE).
--record(?S, {db_mod, db_config}).
+
+-type ctx() :: term().
+
+-record(?S, {db_mod :: atom(),
+             db_config,
+             db_ctx :: ctx()}).
 
 -type state() :: #?S{}.
 
 %%--------------------------------------------------------------------
 %% Behavior callbacks
 %%--------------------------------------------------------------------
--callback db_init(Config) -> ok | {error, Reason}
-    when Config :: term(), Reason :: term().
+-callback db_init(Config) -> {ok, Context} | {error, Reason}
+    when Config :: term(), Context :: ctx(), Reason :: term().
 
 
--callback db_info() -> Info
+-callback db_info(ctx()) -> Info
     when Info :: proplists:proplist().
 
 
--callback db_terminate() -> ok.
+-callback db_terminate(Context) -> ok when
+      Context :: ctx().
 
 
--callback all_reg() -> Result
-    when Result :: push_reg_list().
+-callback all_reg(term()) -> list().
 
 
--callback all_registration_info() -> Result
+-callback all_registration_info(ctx()) -> Result
     when Result :: [sc_types:reg_proplist()].
 
 
--callback check_id(RegIdKey) -> Result
+-callback check_id(ctx(), RegIdKey) -> Result
     when RegIdKey :: reg_id_key(), Result :: reg_id_key().
 
 
--callback check_ids(RegIdKeys) -> Result
+-callback check_ids(ctx(), RegIdKeys) -> Result
     when RegIdKeys :: reg_id_keys(), Result :: reg_id_keys().
 
 
--callback create_tables(Config) -> any()
+-callback create_tables(ctx(), Config) -> any()
     when Config :: any().
 
 
--callback delete_push_regs_by_device_ids(Key) -> Result
+-callback delete_push_regs_by_device_ids(ctx(), Key) -> Result
     when Key :: term(), Result :: term().
 
 
--callback delete_push_regs_by_ids(Key) -> Result
+-callback delete_push_regs_by_ids(ctx(), Key) -> Result
     when Key :: term(), Result :: term().
 
 
--callback delete_push_regs_by_svc_toks(Key) -> Result
+-callback delete_push_regs_by_svc_toks(ctx(), Key) -> Result
     when Key :: term(), Result :: term().
 
 
--callback update_invalid_timestamps_by_svc_toks(Key) -> Result
+-callback update_invalid_timestamps_by_svc_toks(ctx(), Key) -> Result
     when Key :: term(), Result :: term().
 
 
--callback delete_push_regs_by_tags(Key) -> Result
+-callback delete_push_regs_by_tags(ctx(), Key) -> Result
     when Key :: term(), Result :: term().
 
 
--callback get_registration_info_by_device_id(Key) -> Result
+-callback get_registration_info_by_device_id(ctx(), Key) -> Result
     when Key :: term(), Result :: term().
 
 
--callback get_registration_info_by_id(Key) -> Result
+-callback get_registration_info_by_id(ctx(), Key) -> Result
     when Key :: term(), Result :: term().
 
 
--callback get_registration_info_by_svc_tok(Key) -> Result
+-callback get_registration_info_by_svc_tok(ctx(), Key) -> Result
     when Key :: term(), Result :: term().
 
 
--callback get_registration_info_by_tag(Key) -> Result
+-callback get_registration_info_by_tag(ctx(), Key) -> Result
     when Key :: term(), Result :: term().
 
 
--callback is_valid_push_reg(Key) -> Result
+-callback is_valid_push_reg(ctx(), Key) -> Result
     when Key :: term(), Result :: term().
 
 
--callback reregister_ids(Ids) -> ok
+-callback reregister_ids(ctx(), Ids) -> ok
     when Ids :: [{reg_id_key(), binary()}].
 
 
--callback reregister_svc_toks(SvcToks) -> ok
+-callback reregister_svc_toks(ctx(), SvcToks) -> ok
     when SvcToks :: [{svc_tok_key(), binary()}].
 
 
--callback save_push_regs(ListOfProplists) -> Result
+-callback save_push_regs(ctx(), ListOfProplists) -> Result
     when ListOfProplists :: [sc_types:reg_proplist(), ...],
          Result :: ok | {error, term()}.
 
@@ -194,9 +217,10 @@
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec start_link() -> {ok, pid()} | ignore | {error, term()}.
-start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+-spec start_link(Args) -> Result when
+      Args :: term(), Result :: {ok, pid()} | ignore | {error, term()}.
+start_link(Args) ->
+    gen_server:start_link(?MODULE, Args, []).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -204,124 +228,142 @@ start_link() ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec start() -> {ok, pid()} | ignore | {error, term()}.
-start() ->
-    gen_server:start({local, ?SERVER}, ?MODULE, [], []).
+-spec start(Args) -> Result when
+      Args :: term(), Result :: {ok, pid()} | ignore | {error, term()}.
+start(Args) ->
+    gen_server:start(?MODULE, Args, []).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Stop an unlinked server (for testing and debugging).
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec stop(ServerRef) -> ok when ServerRef :: server_ref().
+stop(ServerRef) ->
+    gen_server:stop(ServerRef).
 
 %%--------------------------------------------------------------------
 %% @doc Return a list of property lists of all registrations.
 %% @deprecated For debug only
--spec all_registration_info() -> [sc_types:reg_proplist()].
-all_registration_info() ->
-    gen_server:call(?SERVER, all_registration_info).
+-spec all_registration_info(pid()) -> [sc_types:reg_proplist()].
+all_registration_info(Worker) ->
+    gen_server:call(Worker, all_registration_info).
 
 %%--------------------------------------------------------------------
 %% @doc Return a list of all push registration records.
 %% @deprecated For debug only.
--spec all_reg() -> push_reg_list().
-all_reg() ->
-    gen_server:call(?SERVER, all_reg).
+-spec all_reg(pid()) -> push_reg_list().
+all_reg(Worker) ->
+    gen_server:call(Worker, all_reg).
 
 %%--------------------------------------------------------------------
 %% @doc Check registration id key.
--spec check_id(reg_id_key()) -> reg_id_key().
-check_id(ID) ->
-    gen_server:call(?SERVER, {check_id, ID}).
+-spec check_id(pid(), reg_id_key()) -> reg_id_key().
+check_id(Worker, ID) ->
+    gen_server:call(Worker, {check_id, ID}).
 
 %%--------------------------------------------------------------------
 %% @doc Check multiple registration id keys.
--spec check_ids(reg_id_keys()) -> reg_id_keys().
-check_ids(IDs) ->
-    gen_server:call(?SERVER, {check_ids, IDs}).
+-spec check_ids(pid(), reg_id_keys()) -> reg_id_keys().
+check_ids(Worker, IDs) ->
+    gen_server:call(Worker, {check_ids, IDs}).
 
 %%--------------------------------------------------------------------
 %% @doc Create tables. May be a no-op for certain backends.
-create_tables(Config) ->
-    gen_server:call(?SERVER, {create_tables, Config}).
+create_tables(Worker, Config) ->
+    gen_server:call(Worker, {create_tables, Config}).
 
 %%--------------------------------------------------------------------
 %% @doc Delete push registrations by device ids
--spec delete_push_regs_by_device_ids([binary()]) -> ok | {error, term()}.
-delete_push_regs_by_device_ids(DeviceIDs) ->
-    gen_server:call(?SERVER, {delete_push_regs_by_device_ids, DeviceIDs}).
+-spec delete_push_regs_by_device_ids(pid(), [binary()]) -> ok |
+                                                           {error, term()}.
+delete_push_regs_by_device_ids(Worker, DeviceIDs) ->
+    gen_server:call(Worker, {delete_push_regs_by_device_ids, DeviceIDs}).
 
 %%--------------------------------------------------------------------
 %% @doc Delete push registrations by internal registration id.
--spec delete_push_regs_by_ids(reg_id_keys()) -> ok | {error, term()}.
-delete_push_regs_by_ids(IDs) ->
-    gen_server:call(?SERVER, {delete_push_regs_by_ids, IDs}).
+-spec delete_push_regs_by_ids(pid(), reg_id_keys()) -> ok | {error, term()}.
+delete_push_regs_by_ids(Worker, IDs) ->
+    gen_server:call(Worker, {delete_push_regs_by_ids, IDs}).
 
 %%--------------------------------------------------------------------
 %% @doc Delete push registrations by service-token.
--spec delete_push_regs_by_svc_toks([svc_tok_key()]) -> ok | {error, term()}.
-delete_push_regs_by_svc_toks(SvcToks) ->
-    gen_server:call(?SERVER, {delete_push_regs_by_svc_toks, SvcToks}).
+-spec delete_push_regs_by_svc_toks(pid(), [svc_tok_key()]) -> ok | {error, term()}.
+delete_push_regs_by_svc_toks(Worker, SvcToks) ->
+    gen_server:call(Worker, {delete_push_regs_by_svc_toks, SvcToks}).
 
 %%--------------------------------------------------------------------
 %% @doc Update push registration invalid timestamp by service-token.
--spec update_invalid_timestamps_by_svc_toks([{svc_tok_key(), non_neg_integer()}]) -> ok | {error, term()}.
-update_invalid_timestamps_by_svc_toks(SvcToksTs) ->
-    gen_server:call(?SERVER, {update_invalid_timestamps_by_svc_toks, SvcToksTs}).
+-spec update_invalid_timestamps_by_svc_toks(Worker, SvcToksTs) -> ok | {error, term()} when
+      Worker :: pid(), SvcToksTs :: [{svc_tok_key(), non_neg_integer()}].
+update_invalid_timestamps_by_svc_toks(Worker, SvcToksTs) ->
+    gen_server:call(Worker, {update_invalid_timestamps_by_svc_toks, SvcToksTs}).
 
 %%--------------------------------------------------------------------
 %% @doc Delete push registrations by tags.
--spec delete_push_regs_by_tags([binary()]) -> ok | {error, term()}.
-delete_push_regs_by_tags(Tags) ->
-    gen_server:call(?SERVER, {delete_push_regs_by_tags, Tags}).
+-spec delete_push_regs_by_tags(pid(), [binary()]) -> ok | {error, term()}.
+delete_push_regs_by_tags(Worker, Tags) ->
+    gen_server:call(Worker, {delete_push_regs_by_tags, Tags}).
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by device id.
--spec get_registration_info_by_device_id(binary()) ->
+-spec get_registration_info_by_device_id(pid(), binary()) ->
     list(sc_types:reg_proplist()) | notfound.
-get_registration_info_by_device_id(DeviceID) ->
-    gen_server:call(?SERVER, {get_registration_info_by_device_id, DeviceID}).
+get_registration_info_by_device_id(Worker, DeviceID) ->
+    gen_server:call(Worker, {get_registration_info_by_device_id, DeviceID}).
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by unique id.
 %% @see make_id/2
--spec get_registration_info_by_id(reg_id_key()) ->
+-spec get_registration_info_by_id(pid(), reg_id_key()) ->
     list(sc_types:reg_proplist()) | notfound.
-get_registration_info_by_id(ID) ->
-    gen_server:call(?SERVER, {get_registration_info_by_id, ID}).
+get_registration_info_by_id(Worker, ID) ->
+    gen_server:call(Worker, {get_registration_info_by_id, ID}).
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by service-token.
 %% @see make_svc_tok/2
--spec get_registration_info_by_svc_tok(svc_tok_key()) ->
+-spec get_registration_info_by_svc_tok(pid(), svc_tok_key()) ->
     list(sc_types:reg_proplist()) | notfound.
-get_registration_info_by_svc_tok(SvcTok) ->
-    gen_server:call(?SERVER, {get_registration_info_by_svc_tok, SvcTok}).
+get_registration_info_by_svc_tok(Worker, SvcTok) ->
+    gen_server:call(Worker, {get_registration_info_by_svc_tok, SvcTok}).
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by tag.
--spec get_registration_info_by_tag(binary()) ->
+-spec get_registration_info_by_tag(pid(), binary()) ->
     list(sc_types:reg_proplist()) | notfound.
-get_registration_info_by_tag(Tag) ->
-    gen_server:call(?SERVER, {get_registration_info_by_tag, Tag}).
+get_registration_info_by_tag(Worker, Tag) ->
+    gen_server:call(Worker, {get_registration_info_by_tag, Tag}).
 
 %%--------------------------------------------------------------------
 %% @doc Is push registration proplist valid?
--spec is_valid_push_reg(sc_types:proplist(atom(), term())) -> boolean().
-is_valid_push_reg(PL) ->
-    gen_server:call(?SERVER, {is_valid_push_reg, PL}).
+-spec is_valid_push_reg(pid(), sc_types:proplist(atom(), term())) -> boolean().
+is_valid_push_reg(Worker, PL) ->
+    gen_server:call(Worker, {is_valid_push_reg, PL}).
 
 %%--------------------------------------------------------------------
 %% @doc Save a list of push registrations.
--spec save_push_regs([sc_types:reg_proplist(), ...]) -> ok | {error, term()}.
-save_push_regs(ListOfProplists) ->
-    gen_server:call(?SERVER, {save_push_regs, ListOfProplists}).
+-spec save_push_regs(Worker, ListOfPropLists) -> ok | {error, term()} when
+      Worker :: pid(), ListOfPropLists :: [sc_types:reg_proplist(), ...].
+save_push_regs(Worker, ListOfProplists) ->
+    gen_server:call(Worker, {save_push_regs, ListOfProplists}).
 
 %%--------------------------------------------------------------------
 %% @doc Re-register invalidated tokens
--spec reregister_ids([{reg_id_key(), binary()}]) -> ok.
-reregister_ids(IDToks) ->
-    gen_server:call(?SERVER, {reregister_ids, IDToks}).
+-spec reregister_ids(pid(), [{reg_id_key(), binary()}]) -> ok.
+reregister_ids(Worker, IDToks) ->
+    gen_server:call(Worker, {reregister_ids, IDToks}).
 
 %%--------------------------------------------------------------------
 %% @doc Re-register invalidated tokens by svc_tok
--spec reregister_svc_toks([{svc_tok_key(), binary()}]) -> ok.
-reregister_svc_toks(SvcToks) ->
-    gen_server:call(?SERVER, {reregister_svc_toks, SvcToks}).
+-spec reregister_svc_toks(pid(), [{svc_tok_key(), binary()}]) -> ok.
+reregister_svc_toks(Worker, SvcToks) ->
+    gen_server:call(Worker, {reregister_svc_toks, SvcToks}).
+
+%%--------------------------------------------------------------------
+%% Locally-implemented APIs
+%%--------------------------------------------------------------------
 
 %%--------------------------------------------------------------------
 %% @doc Convert to an opaque registration ID key.
@@ -361,6 +403,23 @@ make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
       .
 make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist, LastModifiedOn,
                    LastInvalidOn) ->
+    CreatedOn = erlang:timestamp(),
+    make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
+                       LastModifiedOn, LastInvalidOn, CreatedOn).
+
+%%--------------------------------------------------------------------
+%% @doc Create a property list from push registration data.
+-spec make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
+                         LastModifiedOn, LastInvalidOn, CreatedOn) -> Result
+    when
+      Service :: atomable(), Token :: binable(), DeviceId :: binable(),
+      Tag :: binable(), AppId :: binable(), Dist :: binable(),
+      LastModifiedOn :: erlang:timestamp(), LastInvalidOn :: erlang:timestamp(),
+      CreatedOn :: erlang:timestamp(),
+      Result :: reg_db_props()
+      .
+make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist, LastModifiedOn,
+                   LastInvalidOn, CreatedOn) ->
     [
         {device_id, sc_util:to_bin(DeviceId)},
         {service, sc_util:to_atom(Service)},
@@ -368,6 +427,7 @@ make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist, LastModifiedOn,
         {tag, sc_util:to_bin(Tag)},
         {app_id, sc_util:to_bin(AppId)},
         {dist, sc_util:to_bin(Dist)},
+        {created_on, CreatedOn},
         {modified, LastModifiedOn},
         {last_invalid_on, LastInvalidOn}
     ].
@@ -391,6 +451,10 @@ from_posix_time_ms(TimestampMs) ->
      TimestampMs rem 1000 * 1000}.
 
 %%--------------------------------------------------------------------
+%% gen_server callbacks
+%%--------------------------------------------------------------------
+
+%%--------------------------------------------------------------------
 %% @private
 %% @doc
 %% Initializes the server
@@ -403,23 +467,14 @@ from_posix_time_ms(TimestampMs) ->
                       {stop, Reason::term()} |
                       'ignore'
                       .
-init([]) ->
+init(Args) ->
     erlang:process_flag(trap_exit, true),
-    {ok, App} = application:get_application(?MODULE),
-    DbMod = application:get_env(App, db_mod, sc_push_reg_db_mnesia),
-    _ = lager:info("Push registration db module is ~p", [DbMod]),
-    DbConfig = application:get_env(App, db_config, [node()]),
-    _ = lager:info("Push registration db config is ~p", [DbConfig]),
-    case DbMod:db_init(DbConfig) of
-        ok ->
-            _ = lager:info("DB module ~p is initialized", [DbMod]),
-            State = #?S{db_mod=DbMod, db_config=DbConfig},
-            {ok, State};
-        Error ->
-            _ = lager:error("~p:db_init/1 failed with config ~p",
-                            [DbMod, DbConfig]),
-            {stop, {DbMod, db_init, DbConfig, Error}}
-    end.
+    DbMod = proplists:get_value(db_mod, Args),
+    DbConfig = proplists:get_value(db_config, Args),
+    {ok, DbCtx} = DbMod:db_init(DbConfig),
+    {ok, #?S{db_mod = DbMod,
+             db_config = DbConfig,
+             db_ctx = DbCtx}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -441,59 +496,73 @@ init([]) ->
     {stop, Reason::term(), NewState::state()}
     .
 
-handle_call(all_registration_info, _From, St) ->
-    Reply = (St#?S.db_mod):all_registration_info(),
+handle_call(all_registration_info, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:all_registration_info(Ctx),
     {reply, Reply, St};
-handle_call(all_reg, _From, St) ->
-    Reply = (St#?S.db_mod):all_reg(),
+handle_call(all_reg, _From, #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:all_reg(Ctx),
     {reply, Reply, St};
-handle_call({check_id, ID}, _From, St) ->
-    Reply = (St#?S.db_mod):check_id(ID),
+handle_call({check_id, ID}, _From, #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:check_id(Ctx, ID),
     {reply, Reply, St};
-handle_call({check_ids, IDs}, _From, St) ->
-    Reply = (St#?S.db_mod):check_ids(IDs),
+handle_call({check_ids, IDs}, _From, #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:check_ids(Ctx, IDs),
     {reply, Reply, St};
-handle_call({create_tables, Config}, _From, St) ->
-    Reply = (St#?S.db_mod):create_tables(Config),
+handle_call({create_tables, Config}, _From, #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:create_tables(Ctx, Config),
     {reply, Reply, St};
-handle_call({delete_push_regs_by_device_ids, DeviceIDs}, _From, St) ->
-    Reply = (St#?S.db_mod):delete_push_regs_by_device_ids(DeviceIDs),
+handle_call({delete_push_regs_by_device_ids, DeviceIDs}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:delete_push_regs_by_device_ids(Ctx, DeviceIDs),
     {reply, Reply, St};
-handle_call({delete_push_regs_by_ids, IDs}, _From, St) ->
-    Reply = (St#?S.db_mod):delete_push_regs_by_ids(IDs),
+handle_call({delete_push_regs_by_ids, IDs}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:delete_push_regs_by_ids(Ctx, IDs),
     {reply, Reply, St};
-handle_call({delete_push_regs_by_svc_toks, SvcToks}, _From, St) ->
-    Reply = (St#?S.db_mod):delete_push_regs_by_svc_toks(SvcToks),
+handle_call({delete_push_regs_by_svc_toks, SvcToks}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:delete_push_regs_by_svc_toks(Ctx, SvcToks),
     {reply, Reply, St};
-handle_call({delete_push_regs_by_tags, Tags}, _From, St) ->
-    Reply = (St#?S.db_mod):delete_push_regs_by_tags(Tags),
+handle_call({delete_push_regs_by_tags, Tags}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:delete_push_regs_by_tags(Ctx, Tags),
     {reply, Reply, St};
-handle_call({update_invalid_timestamps_by_svc_toks, SvcToksTs}, _From, St) ->
-    Reply = (St#?S.db_mod):update_invalid_timestamps_by_svc_toks(SvcToksTs),
+handle_call({update_invalid_timestamp_by_svc_toks, SvcToksTs},
+            _From, #?S{db_mod=Mod, db_ctx=Ctx}=St)->
+    Reply = Mod:update_invalid_timestamps_by_svc_toks(Ctx, SvcToksTs),
     {reply, Reply, St};
-handle_call({get_registration_info_by_device_id, DeviceID}, _From, St) ->
-    Reply = (St#?S.db_mod):get_registration_info_by_device_id(DeviceID),
+handle_call({get_registration_info_by_device_id, DeviceID}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St)->
+    Reply = Mod:get_registration_info_by_device_id(Ctx, DeviceID),
     {reply, Reply, St};
-handle_call({get_registration_info_by_id, ID}, _From, St) ->
-    Reply = (St#?S.db_mod):get_registration_info_by_id(ID),
+handle_call({get_registration_info_by_id, ID}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St)->
+    Reply = Mod:get_registration_info_by_id(Ctx, ID),
     {reply, Reply, St};
-handle_call({get_registration_info_by_svc_tok, SvcTok}, _From, St) ->
-    Reply = (St#?S.db_mod):get_registration_info_by_svc_tok(SvcTok),
+handle_call({get_registration_info_by_svc_tok, SvcTok}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St)->
+    Reply = Mod:get_registration_info_by_svc_tok(Ctx, SvcTok),
     {reply, Reply, St};
-handle_call({get_registration_info_by_tag, Tag}, _From, St) ->
-    Reply = (St#?S.db_mod):get_registration_info_by_tag(Tag),
+handle_call({get_registration_info_by_tag, Tag}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St)->
+    Reply = Mod:get_registration_info_by_tag(Ctx, Tag),
     {reply, Reply, St};
-handle_call({save_push_regs, ListOfProplists}, _From, St) ->
-    Reply = (St#?S.db_mod):save_push_regs(ListOfProplists),
+handle_call({save_push_regs, ListOfProplists}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St)->
+    Reply = Mod:save_push_regs(Ctx, ListOfProplists),
     {reply, Reply, St};
-handle_call({is_valid_push_reg, PL}, _From, St) ->
-    Reply = (St#?S.db_mod):is_valid_push_reg(PL),
+handle_call({is_valid_push_reg, PL}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St)->
+    Reply = Mod:is_valid_push_reg(Ctx, PL),
     {reply, Reply, St};
-handle_call({reregister_ids, IdToks}, _From, St) ->
-    Reply = (St#?S.db_mod):reregister_ids(IdToks),
+handle_call({reregister_ids, IdToks}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St)->
+    Reply = Mod:reregister_ids(Ctx, IdToks),
     {reply, Reply, St};
-handle_call({reregister_svc_toks, SvcToks}, _From, St) ->
-    Reply = (St#?S.db_mod):reregister_svc_toks(SvcToks),
+handle_call({reregister_svc_toks, SvcToks}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:reregister_svc_toks(Ctx, SvcToks),
     {reply, Reply, St};
 handle_call(_Request, _From, State) ->
     Reply = {error, invalid_request},
@@ -549,9 +618,9 @@ handle_info(_Info, State) ->
 %%--------------------------------------------------------------------
 -spec terminate(Reason::terminate_reason(),
                 State::state()) -> no_return().
-terminate(shutdown, St) ->
-    lager:info("~p terminated via shutdown", [St#?S.db_mod]),
-    (catch (St#?S.db_mod):db_terminate());
+terminate(shutdown, #?S{db_mod=Mod, db_ctx=Ctx}) ->
+    lager:info("~p terminated via shutdown", [Mod]),
+    (catch Mod:db_terminate(Ctx));
 terminate(Reason, St) ->
     lager:info("~p terminated for reason ~p", [St#?S.db_mod, Reason]).
 

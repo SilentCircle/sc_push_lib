@@ -30,6 +30,9 @@ info:
 compile: $(REBAR)
 	$(REBAR) do clean, compile
 
+run: compile
+	$(REBAR) shell --name sc_push_lib --setcookie scpf
+
 clean: $(REBAR) docclean
 	$(REBAR) clean
 

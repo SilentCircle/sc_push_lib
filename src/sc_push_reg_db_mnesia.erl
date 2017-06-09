@@ -20,26 +20,26 @@
 
 -export([
          db_init/1,
-         db_info/0,
-         db_terminate/0,
-         all_reg/0,
-         all_registration_info/0,
-         check_id/1,
-         check_ids/1,
-         create_tables/1,
-         delete_push_regs_by_device_ids/1,
-         delete_push_regs_by_ids/1,
-         delete_push_regs_by_svc_toks/1,
-         delete_push_regs_by_tags/1,
-         update_invalid_timestamps_by_svc_toks/1,
-         get_registration_info_by_device_id/1,
-         get_registration_info_by_id/1,
-         get_registration_info_by_svc_tok/1,
-         get_registration_info_by_tag/1,
-         is_valid_push_reg/1,
-         reregister_ids/1,
-         reregister_svc_toks/1,
-         save_push_regs/1
+         db_info/1,
+         db_terminate/1,
+         all_reg/1,
+         all_registration_info/1,
+         check_id/2,
+         check_ids/2,
+         create_tables/2,
+         delete_push_regs_by_device_ids/2,
+         delete_push_regs_by_ids/2,
+         delete_push_regs_by_svc_toks/2,
+         delete_push_regs_by_tags/2,
+         update_invalid_timestamps_by_svc_toks/2,
+         get_registration_info_by_device_id/2,
+         get_registration_info_by_id/2,
+         get_registration_info_by_svc_tok/2,
+         get_registration_info_by_tag/2,
+         is_valid_push_reg/2,
+         reregister_ids/2,
+         reregister_svc_toks/2,
+         save_push_regs/2
         ]).
 
 -include("sc_push_lib.hrl").
@@ -79,49 +79,53 @@
     }).
 
 -type push_reg_list() :: list(#sc_pshrg{}).
+-type ctx() :: term().
 
 %%====================================================================
 %% API
 %%====================================================================
-db_init(Nodes) ->
+db_init(Config) when is_list(Config) ->
+    Nodes = sc_util:val(nodes, Config, [node()]),
+    Ctx = [],
     case application:get_env(mnesia, dir) of
         {ok, Dir} ->
             lager:info("Mnesia dir: ~s", [Dir]),
             ok = filelib:ensure_dir(Dir),
             mnesia:start(),
-            create_tables(Nodes);
-        _Error ->
-            erlang:error("-mnesia dir \"path/to/db\" "
-                         "missing from environment")
+            create_tables(Ctx, Nodes),
+            {ok, Ctx};
+        undefined ->
+            {error, "-mnesia dir \"path/to/db\" "
+                    "missing from environment"}
     end.
 
 %%--------------------------------------------------------------------
-db_info() -> [].
+db_info(_Ctx) -> [].
 
 %%--------------------------------------------------------------------
-db_terminate() ->
+db_terminate(_Ctx) ->
     ok.
 
 %%--------------------------------------------------------------------
 %% @doc Return a list of property lists of all registrations.
 %% @deprecated For debug only
--spec all_registration_info() -> [sc_types:reg_proplist()].
-all_registration_info() ->
-    [sc_pshrg_to_props(R) || R <- all_reg()].
+-spec all_registration_info(ctx()) -> [sc_types:reg_proplist()].
+all_registration_info(Ctx) ->
+    [sc_pshrg_to_props(R) || R <- all_reg(Ctx)].
 
 %%--------------------------------------------------------------------
 %% @doc Return a list of all push registration records.
 %% @deprecated For debug only.
--spec all_reg() -> push_reg_list().
-all_reg() ->
+-spec all_reg(ctx()) -> push_reg_list().
+all_reg(_Ctx) ->
     do_txn(fun() ->
                 mnesia:select(sc_pshrg, ets:fun2ms(fun(R) -> R end))
         end).
 
 %%--------------------------------------------------------------------
 %% @doc Check registration id key.
--spec check_id(?SPRDB:reg_id_key()) -> ?SPRDB:reg_id_key().
-check_id(ID) ->
+-spec check_id(ctx(), ?SPRDB:reg_id_key()) -> ?SPRDB:reg_id_key().
+check_id(_Ctx, ID) ->
     case ID of
         {<<_, _/binary>>, <<_, _/binary>>} ->
            ID;
@@ -131,12 +135,12 @@ check_id(ID) ->
 
 %%--------------------------------------------------------------------
 %% @doc Check multiple registration id keys.
--spec check_ids(?SPRDB:reg_id_keys()) -> ?SPRDB:reg_id_keys().
-check_ids(IDs) when is_list(IDs) ->
-    [check_id(ID) || ID <- IDs].
+-spec check_ids(ctx(), ?SPRDB:reg_id_keys()) -> ?SPRDB:reg_id_keys().
+check_ids(Ctx, IDs) when is_list(IDs) ->
+    [check_id(Ctx, ID) || ID <- IDs].
 
 %%--------------------------------------------------------------------
-create_tables(Nodes) ->
+create_tables(_Ctx, Nodes) ->
     Defs = [
         {sc_pshrg,
             [
@@ -153,69 +157,69 @@ create_tables(Nodes) ->
 
 %%--------------------------------------------------------------------
 %% @doc Delete push registrations by device ids
--spec delete_push_regs_by_device_ids([binary()]) -> ok | {error, term()}.
-delete_push_regs_by_device_ids(DeviceIDs) when is_list(DeviceIDs) ->
+-spec delete_push_regs_by_device_ids(ctx(), [binary()]) -> ok | {error, term()}.
+delete_push_regs_by_device_ids(_Ctx, DeviceIDs) when is_list(DeviceIDs) ->
     do_txn(delete_push_regs_by_device_id_txn(), [DeviceIDs]).
 
 %%--------------------------------------------------------------------
 %% @doc Delete push registrations by internal registration id.
--spec delete_push_regs_by_ids(?SPRDB:reg_id_keys()) -> ok | {error, term()}.
-delete_push_regs_by_ids(IDs) ->
+-spec delete_push_regs_by_ids(ctx(), ?SPRDB:reg_id_keys()) -> ok | {error, term()}.
+delete_push_regs_by_ids(_Ctx, IDs) ->
     do_txn(delete_push_regs_txn(), [IDs]).
 
 %%--------------------------------------------------------------------
 %% @doc Delete push registrations by service-token.
--spec delete_push_regs_by_svc_toks([?SPRDB:svc_tok_key()]) -> ok | {error, term()}.
-delete_push_regs_by_svc_toks(SvcToks) when is_list(SvcToks) ->
+-spec delete_push_regs_by_svc_toks(ctx(), [?SPRDB:svc_tok_key()]) -> ok | {error, term()}.
+delete_push_regs_by_svc_toks(_Ctx, SvcToks) when is_list(SvcToks) ->
     do_txn(delete_push_regs_by_svc_tok_txn(), [SvcToks]).
 
 %%--------------------------------------------------------------------
 %% @doc Delete push registrations by tags.
--spec delete_push_regs_by_tags([binary()]) -> ok | {error, term()}.
-delete_push_regs_by_tags(Tags) when is_list(Tags) ->
+-spec delete_push_regs_by_tags(ctx(), [binary()]) -> ok | {error, term()}.
+delete_push_regs_by_tags(_Ctx, Tags) when is_list(Tags) ->
     do_txn(delete_push_regs_by_tag_txn(), [Tags]).
 
 %%--------------------------------------------------------------------
 %% @doc Update push registration last_invalid timestmap by service-token.
--spec update_invalid_timestamps_by_svc_toks([{?SPRDB:svc_tok_key(), non_neg_integer()}]) ->
+-spec update_invalid_timestamps_by_svc_toks(ctx(), [{?SPRDB:svc_tok_key(), non_neg_integer()}]) ->
     ok | {error, term()}.
-update_invalid_timestamps_by_svc_toks(SvcToksTs) when is_list(SvcToksTs) ->
+update_invalid_timestamps_by_svc_toks(_Ctx, SvcToksTs) when is_list(SvcToksTs) ->
     do_txn(update_invalid_timestamps_by_svc_toks_txn(), [SvcToksTs]).
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by device id.
--spec get_registration_info_by_device_id(binary()) ->
+-spec get_registration_info_by_device_id(ctx(), binary()) ->
     list(sc_types:reg_proplist()) | notfound.
-get_registration_info_by_device_id(DeviceID) ->
+get_registration_info_by_device_id(_Ctx, DeviceID) ->
     get_registration_info_impl(DeviceID, fun lookup_reg_device_id/1).
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by unique id.
 %% @see sc_push_reg_db:make_id/2
--spec get_registration_info_by_id(?SPRDB:reg_id_key()) ->
+-spec get_registration_info_by_id(ctx(), ?SPRDB:reg_id_key()) ->
     list(sc_types:reg_proplist()) | notfound.
-get_registration_info_by_id(ID) ->
+get_registration_info_by_id(_Ctx, ID) ->
     get_registration_info_impl(ID, fun lookup_reg_id/1).
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by service-token.
 %% @see sc_push_reg_db:make_svc_tok/2
--spec get_registration_info_by_svc_tok(?SPRDB:svc_tok_key()) ->
+-spec get_registration_info_by_svc_tok(ctx(), ?SPRDB:svc_tok_key()) ->
     list(sc_types:reg_proplist()) | notfound.
-get_registration_info_by_svc_tok({_Service, _Token} = SvcTok) ->
+get_registration_info_by_svc_tok(_Ctx, {_Service, _Token} = SvcTok) ->
     get_registration_info_impl(SvcTok, fun lookup_svc_tok/1).
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by tag.
--spec get_registration_info_by_tag(binary()) ->
+-spec get_registration_info_by_tag(ctx(), binary()) ->
     list(sc_types:reg_proplist()) | notfound.
-get_registration_info_by_tag(Tag) ->
+get_registration_info_by_tag(_Ctx, Tag) ->
     get_registration_info_impl(Tag, fun lookup_reg_tag/1).
 
 %%--------------------------------------------------------------------
 %% @doc Is push registration proplist valid?
--spec is_valid_push_reg(sc_types:proplist(atom(), term())) -> boolean().
-is_valid_push_reg(PL) ->
+-spec is_valid_push_reg(ctx(), sc_types:proplist(atom(), term())) -> boolean().
+is_valid_push_reg(_Ctx, PL) ->
     try make_sc_pshrg(PL) of
         _ -> true
     catch _:_ -> false
@@ -223,21 +227,21 @@ is_valid_push_reg(PL) ->
 
 %%--------------------------------------------------------------------
 %% @doc Save a list of push registrations.
--spec save_push_regs([sc_types:reg_proplist(), ...]) -> ok | {error, term()}.
-save_push_regs(ListOfProplists) ->
+-spec save_push_regs(ctx(), [sc_types:reg_proplist(), ...]) -> ok | {error, term()}.
+save_push_regs(_Ctx, ListOfProplists) ->
     Regs = [make_sc_pshrg(PL) || PL <- ListOfProplists],
     do_txn(save_push_regs_txn(), [Regs]).
 
 %%--------------------------------------------------------------------
 %% @doc Re-register invalidated tokens
--spec reregister_ids([{?SPRDB:reg_id_key(), binary()}]) -> ok.
-reregister_ids(IDToks) when is_list(IDToks) ->
+-spec reregister_ids(ctx(), [{?SPRDB:reg_id_key(), binary()}]) -> ok.
+reregister_ids(_Ctx, IDToks) when is_list(IDToks) ->
     do_txn(reregister_ids_txn(), [IDToks]).
 
 %%--------------------------------------------------------------------
 %% @doc Re-register invalidated tokens by svc_tok
--spec reregister_svc_toks([{?SPRDB:svc_tok_key(), binary()}]) -> ok.
-reregister_svc_toks(SvcToks) when is_list(SvcToks) ->
+-spec reregister_svc_toks(ctx(), [{?SPRDB:svc_tok_key(), binary()}]) -> ok.
+reregister_svc_toks(_Ctx, SvcToks) when is_list(SvcToks) ->
     do_txn(reregister_svc_toks_txn(), [SvcToks]).
 
 %%====================================================================
@@ -466,14 +470,14 @@ reregister_one_id(ID, NewTok) ->
 -spec reregister_svc_toks_txn() -> fun(([{?SPRDB:svc_tok_key(), binary()}]) -> ok).
 reregister_svc_toks_txn() ->
     fun(SvcToks) ->
-            [reregister_svc_toks(SvcTok, NewTok) || {SvcTok, NewTok} <- SvcToks],
+            [reregister_svc_toks_impl(SvcTok, NewTok) || {SvcTok, NewTok} <- SvcToks],
             ok
     end.
 
 %%--------------------------------------------------------------------
 %% MUST be called in a transaction
 %% Legacy records: if token == device_id, change device_id as well.
-reregister_svc_toks(OldSvcTok, NewTok) ->
+reregister_svc_toks_impl(OldSvcTok, NewTok) ->
     case mnesia:index_read(sc_pshrg, OldSvcTok, #sc_pshrg.svc_tok) of
         [] -> % Does not exist, so that's fine
             ok;

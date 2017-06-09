@@ -44,7 +44,7 @@ start_link() ->
 
 init([]) ->
     {ok, { {one_for_one, 5, 10},
-           [?CHILD(sc_push_reg_db, worker),
+           [?CHILD(sc_push_reg_api, supervisor),
             ?CHILD(sc_config, worker),
             ?CHILD(sc_push_req_mgr, worker)
            ]}
