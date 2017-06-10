@@ -268,25 +268,26 @@ reregister_svc_toks(#?CTX{conn=Conn,
 %%====================================================================
 
 %%--------------------------------------------------------------------
-prepare_statements(Conn) ->
-    PTQueries = push_tokens_queries(?DB_PUSH_TOKENS_TBL),
-    case prepared_queries(Conn, PTQueries) of
-        {PrepQs, []} ->
-            {ok, _} = epgsql:equery(Conn, <<"upsert_func">>, []),
-            {ok, PrepQs};
-        {_, Errors} ->
-            {error, Errors}
-    end.
-
-%%--------------------------------------------------------------------
 make_context(Conn, Config) ->
     try
         {ok, PrepQs} = prepare_statements(Conn),
-        #?CTX{conn=Conn, config=Config, prep_qs=PrepQs}
+        {ok, #?CTX{conn=Conn, config=Config, prep_qs=PrepQs}}
     catch
         _:Error ->
             (catch epqsql:close(Conn)),
             Error
+    end.
+
+%%--------------------------------------------------------------------
+prepare_statements(Conn) ->
+    PTQueries = push_tokens_queries(?DB_PUSH_TOKENS_TBL),
+    case prepared_queries(Conn, PTQueries) of
+        {PrepQs, []} ->
+            handle_error(pq(Conn, <<"delete_upsert_func">>, [])),
+            handle_error(pq(Conn, <<"create_upsert_func">>, [])),
+            {ok, maps:from_list([{S#statement.name, S} || S <- PrepQs])};
+        {_, Errors} ->
+            {error, Errors}
     end.
 
 %%--------------------------------------------------------------------
@@ -334,7 +335,7 @@ upsert_row_txn(Conn, RegProps) ->
 %% For debugging only - if called on large db, unhappy days ahead.
 -spec db_all_regs(term()) -> ?SPRDB:push_reg_list().
 db_all_regs(Conn) ->
-    do_reg_pquery(Conn, <<"db_all_regs">>, []).
+    do_reg_pquery(Conn, <<"all_regs">>, []).
 
 %%--------------------------------------------------------------------
 -spec lookup_reg_id(conn(), ?SPRDB:reg_id_key()) -> ?SPRDB:push_reg_list().
@@ -370,12 +371,12 @@ do_reg_pquery(Conn, QueryName, Args) ->
     case pq(Conn, QueryName, Args) of
         {error, _}=Error ->
             Error;
-        {ok, #{}=Maps} ->
+        {ok, Count} when is_integer(Count) ->
+            [];
+        {ok, Maps} when is_list(Maps) ->
             push_reg_maps_to_props(Maps);
-        {ok, _Count, #{}=Maps} ->
-            push_reg_maps_to_props(Maps);
-        {ok, _Count} ->
-            []
+        {ok, _Count, Maps} ->
+            push_reg_maps_to_props(Maps)
     end.
 
 %%--------------------------------------------------------------------
@@ -610,30 +611,6 @@ posix_ms_to_pg_datetime(PosixMs) ->
     {Date, {H,M,S}} = calendar:now_to_universal_time(TS),
     {Date, {H, M, S + (Micros / 1000000.0)}}.
 
-%-record(error, {
-%    % see client_min_messages config option
-%    severity :: debug | log | info | notice | warning | error | fatal | panic,
-%    code :: binary(),
-%    codename :: atom(),
-%    message :: binary(),
-%    extra :: [{severity | detail | hint | position | internal_position | internal_query
-%               | where | schema_name | table_name | column_name | data_type_name
-%               | constraint_name | file | line | routine,
-%               binary()}]
-%}).
-
-%%--------------------------------------------------------------------
-%% handle_error({error, #error{}=E}) ->
-%%     throw(E);
-%% handle_error({error, {unsupported_auth_method, Method}}) -> % required auth method is unsupported
-%%     erlang:error({db_unsupported_auth_method, Method});
-%% handle_error({error, timeout}) -> % request timed out
-%%     erlang:error(db_timeout);
-%% handle_error({error, closed})  -> % connection was closed
-%%     erlang:error(db_closed);
-%% handle_error({error, sync_required}) -> % error occured and epgsql:sync must be called
-%%     erlang:error(db_sync_required).
-
 %%--------------------------------------------------------------------
 -spec prepared_queries(Conn, Queries) -> Result when
       Conn :: epgsql:connection(),
@@ -642,22 +619,29 @@ posix_ms_to_pg_datetime(PosixMs) ->
       Result :: {Stmts, Errs}, Stmts :: [stmt()], Errs :: [{error, Reason}],
       Reason :: epgsql:query_error().
 prepared_queries(Conn, Queries) ->
-    lists:foldr(fun({QName, Q}, {Stmts, Errs}) ->
+    {S, E} = lists:foldl(fun({QName, Q}, {Stmts, Errs}) ->
                         case prepare(Conn, QName, Q) of
                             {ok, Stmt} ->
                                 {[Stmt|Stmts], Errs};
                             {error, Err} ->
                                 {Stmts, [Err|Errs]}
                         end
-                end, {[], []}, Queries).
+                end, {[], []}, Queries),
+    lager:info("Queries prepared successfully: ~B; failed: ~B",
+               [length(S), length(E)]),
+    {S, E}.
+
 
 %%--------------------------------------------------------------------
 -compile({inline, [{prepare,3}]}).
 prepare(Conn, QueryName, Query) ->
+    lager:debug("Preparing query ~s: [~s]",
+                [QueryName, list_to_binary(Query)]),
     epgsql:parse(Conn, QueryName, Query, []).
 
 %%--------------------------------------------------------------------
-push_tokens_queries(Tbl) ->
+push_tokens_queries(Tab) ->
+    Tbl = sc_util:to_bin(Tab),
     Cols = push_tokens_colnames_iolist(),
     [{<<"lookup_one_reg">>,
       [<<"select id from ">>, Tbl,
@@ -695,9 +679,11 @@ push_tokens_queries(Tbl) ->
      {<<"update_reg">>,
       [<<"update ">>, Tbl,
        <<" set uuid = $1, type = $2, token = $3,">>,
-       <<" appname = $4, last_xscdevid = $5, last_seen_on = 'now' ">>,
-       <<" where id = $7">>]},
-     {<<"upsert_func">>, make_upsert_function_query(Tbl, schema_prefix())},
+       <<" appname = $4, last_xscdevid = $5, last_seen_on = now() ">>,
+       <<" where id = $6">>]},
+     {<<"delete_upsert_func">>, delete_upsert_func(schema_prefix())},
+     {<<"create_upsert_func">>,
+      make_upsert_function_query(Tbl, schema_prefix())},
      {<<"call_upsert_func">>, call_upsert_function(schema_prefix())}
     ].
 
@@ -745,10 +731,8 @@ make_delete_query(Tbl, WhereCondition) ->
 
 %%--------------------------------------------------------------------
 make_upsert_function_query(Tab, SchemaPrefix) ->
-    [<<"drop function if exists ">>, SchemaPrefix, <<"push_tokens_upsert;">>, $\s,
-     SchemaPrefix, <<"push_tokens_upsert(text,text,text,text,text);
-        create or replace function ">>, SchemaPrefix, <<"push_tokens_upsert
-            (uuid_ text, type_ text, token_ text, appname_ text, xscdevid_ text)
+    [<<"create or replace function ">>, SchemaPrefix, <<"push_tokens_upsert">>,
+     <<"(uuid_ text, type_ text, token_ text, appname_ text, xscdevid_ text)
             returns integer as $$
           declare
             r record;
@@ -765,16 +749,16 @@ make_upsert_function_query(Tab, SchemaPrefix) ->
                 and a.appname = appname_
               limit 1;
             if not found then
-              insert into ">>, Tab, <<" push_tokens (uuid,type,token,appname,last_xscdevid)
+              insert into ">>, Tab, <<" (uuid,type,token,appname,last_xscdevid)
                 values (uuid_,type_,token_,appname_,xscdevid_);
               return 1;
             else
               if r.needs_atime or r.needs_xscdevid then
-                update ">>, Tab, <<" push_tokens set last_seen_on = now()
+                update ">>, Tab, <<" set last_seen_on = now()
                   where id = r.id;
                 if r.needs_xscdevid then
-                  update ">>, Tab, <<" push_tokens
-                    set last_xscdevid = xscdevid_
+                  update ">>, Tab,
+     <<" set last_xscdevid = xscdevid_
                     where id = r.id;
                   return 3;
                 end if;
@@ -786,9 +770,48 @@ make_upsert_function_query(Tab, SchemaPrefix) ->
           $$ language plpgsql volatile strict;">>].
 
 %%--------------------------------------------------------------------
+delete_upsert_func(SchemaPrefix) ->
+    [<<"drop function if exists ">>,
+     SchemaPrefix, <<"push_tokens_upsert(text,text,text,text,text)">>].
+
+%%--------------------------------------------------------------------
 call_upsert_function(SchemaPrefix) ->
     [<<"select ">>, SchemaPrefix, <<"push_tokens_upsert($1, $2, $3, $4, $5)">>].
 
 %%--------------------------------------------------------------------
 schema_prefix() ->
     list_to_binary(?DB_SCHEMA_PREFIX).
+
+%%--------------------------------------------------------------------
+%-record(error, {
+%    % see client_min_messages config option
+%    severity :: debug | log | info | notice | warning | error | fatal | panic,
+%    code :: binary(),
+%    codename :: atom(),
+%    message :: binary(),
+%    extra :: [{severity | detail | hint | position | internal_position | internal_query
+%               | where | schema_name | table_name | column_name | data_type_name
+%               | constraint_name | file | line | routine,
+%               binary()}]
+%}).
+
+handle_error({error, #error{}=E}) ->
+    lager:error("~s", [pg_errstr(E)]),
+    throw(E);
+handle_error({error, {unsupported_auth_method, Method}}) -> % required auth method is unsupported
+    erlang:error({db_unsupported_auth_method, Method});
+handle_error({error, timeout}) -> % request timed out
+    erlang:error(db_timeout);
+handle_error({error, closed})  -> % connection was closed
+    erlang:error(db_closed);
+handle_error({error, sync_required}) -> % error occured and epgsql:sync must be called
+    erlang:error(db_sync_required);
+handle_error(NotAnError) ->
+    NotAnError.
+
+%%--------------------------------------------------------------------
+pg_errstr(#error{}=E) ->
+    io_lib:format("postgres[~p] ~p[~s]: ~s",
+                  [E#error.severity, E#error.codename, E#error.code,
+                   E#error.message]).
+

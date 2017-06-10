@@ -18,6 +18,8 @@
 
 -behavior(supervisor).
 
+-export([start_link/0]).
+
 -export([
     register_id/1,
     register_ids/1,
@@ -45,123 +47,32 @@
     make_svc_tok/2
     ]).
 
+% Supervisor callbacks
 -export([init/1]).
 
 -include("sc_push_lib.hrl").
 
 -define(SPRDB, sc_push_reg_db).
--define(DEFAULT_DB_MOD, sc_push_db_mnesia).
+-define(POOL_NAME, sc_push_reg_pool). % TODO: Make this a config param
 
 %%--------------------------------------------------------------------
 %% Types
 %%--------------------------------------------------------------------
 -type atom_or_str() :: atom() | string().
 -type bin_or_str() :: binary() | string().
--type ctx() :: term().
-
-%%--------------------------------------------------------------------
-%% Behavior callbacks
-%%--------------------------------------------------------------------
--callback db_init(Config) -> {ok, Context} | {error, Reason}
-    when Config :: term(), Context :: ctx(), Reason :: term().
-
-
--callback db_info() -> Info
-    when Info :: proplists:proplist().
-
-
--callback db_terminate(Context) -> ok when
-      Context :: ctx().
-
-
--callback all_reg() -> Result
-    when Result :: ?SPRDB:push_reg_list().
-
-
--callback all_registration_info() -> Result
-    when Result :: [sc_types:reg_proplist()].
-
-
--callback check_id(RegIdKey) -> Result
-    when RegIdKey :: ?SPRDB:reg_id_key(), Result :: ?SPRDB:reg_id_key().
-
-
--callback check_ids(RegIdKeys) -> Result
-    when RegIdKeys :: ?SPRDB:reg_id_keys(), Result :: ?SPRDB:reg_id_keys().
-
-
--callback create_tables(Config) -> any()
-    when Config :: any().
-
-
--callback delete_push_regs_by_device_ids(Key) -> Result
-    when Key :: term(), Result :: term().
-
-
--callback delete_push_regs_by_ids(Key) -> Result
-    when Key :: term(), Result :: term().
-
-
--callback delete_push_regs_by_svc_toks(Key) -> Result
-    when Key :: term(), Result :: term().
-
-
--callback update_invalid_timestamps_by_svc_toks(Key) -> Result
-    when Key :: term(), Result :: term().
-
-
--callback delete_push_regs_by_tags(Key) -> Result
-    when Key :: term(), Result :: term().
-
-
--callback get_registration_info_by_device_id(Key) -> Result
-    when Key :: term(), Result :: term().
-
-
--callback get_registration_info_by_id(Key) -> Result
-    when Key :: term(), Result :: term().
-
-
--callback get_registration_info_by_svc_tok(Key) -> Result
-    when Key :: term(), Result :: term().
-
-
--callback get_registration_info_by_tag(Key) -> Result
-    when Key :: term(), Result :: term().
-
-
--callback is_valid_push_reg(Key) -> Result
-    when Key :: term(), Result :: term().
-
-
--callback reregister_ids(Ids) -> ok
-    when Ids :: [{?SPRDB:reg_id_key(), binary()}].
-
-
--callback reregister_svc_toks(SvcToks) -> ok
-    when SvcToks :: [{?SPRDB:svc_tok_key(), binary()}].
-
-
--callback save_push_regs(ListOfProplists) -> Result
-    when ListOfProplists :: [sc_types:reg_proplist(), ...],
-         Result :: ok | {error, term()}.
 
 %%====================================================================
 %% API
 %%====================================================================
-init([]) ->
-    {ok, App} = application:get_application(?MODULE),
-    {ok, DbMod} = application:get_env(App, db_mod, ?DEFAULT_DB_MOD),
-    _ = lager:info("Push registration db module is ~p", [DbMod]),
-    {ok, Pools} = application:get_env(App, db_pools),
-    _ = lager:info("Push registration db pools are ~p", [Pools]),
-    PoolSpecs = lists:map(fun({Name, SizeArgs, WorkerArgs}) ->
-        PoolArgs = [{name, {local, Name}},
-            		{worker_module, DbMod}] ++ SizeArgs,
-        poolboy:child_spec(Name, PoolArgs, WorkerArgs)
-    end, Pools),
-    {ok, {{one_for_one, 10, 10}, PoolSpecs}}.
-
+%%--------------------------------------------------------------------
+%% @doc
+%% Starts the supervisor
+%%
+%% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
+%% @end
+%%--------------------------------------------------------------------
+start_link() ->
+    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %% @doc Get registration info of all registered IDs. Note
 %% that in future, this may be limited to the first 100
@@ -169,19 +80,19 @@ init([]) ->
 %% supports getting the information in batches.
 -spec all_registration_info() -> [sc_types:reg_proplist()].
 all_registration_info() ->
-    poolboy:transaction(sc_push_reg_pool, fun ?SPRDB:all_registration_info/1).
+    exec_txn(fun ?SPRDB:all_registration_info/1).
 
 %% @doc Reregister a previously-registered identity, substituting a new token
 %% for the specified push service.
--spec reregister_id(sc_push_reg_db:reg_id_key(), binary()) -> ok.
+-spec reregister_id(?SPRDB:reg_id_key(), binary()) -> ok.
 reregister_id(OldId, <<NewToken/binary>>) ->
-    sc_push_reg_db:reregister_ids([{OldId, NewToken}]).
+    exec_txn(fun(C) -> ?SPRDB:reregister_ids(C, [{OldId, NewToken}]) end).
 
 %% @doc Reregister a previously-registered identity, substituting a new token
 %% for the specified push service and removing .
--spec reregister_svc_tok(sc_push_reg_db:svc_tok_key(), binary()) -> ok.
+-spec reregister_svc_tok(?SPRDB:svc_tok_key(), binary()) -> ok.
 reregister_svc_tok(OldSvcTok, <<NewToken/binary>>) ->
-    sc_push_reg_db:reregister_svc_toks([{OldSvcTok, NewToken}]).
+    exec_txn(fun(C) -> ?SPRDB:reregister_svc_toks(C, [{OldSvcTok, NewToken}]) end).
 
 %% @doc Register an identity for receiving push notifications
 %% from a supported push service.
@@ -193,7 +104,7 @@ register_id([{_, _}|_] = Props) ->
 -spec register_ids([sc_types:reg_proplist(), ...]) -> ok | {error, term()}.
 register_ids([[{_, _}|_]|_] = ListOfProplists) ->
     try
-        sc_push_reg_db:save_push_regs(ListOfProplists)
+        exec_txn(fun(C) -> ?SPRDB:save_push_regs(C, ListOfProplists) end)
     catch
         _:Reason ->
             {error, Reason}
@@ -205,7 +116,7 @@ deregister_tag(<<>>) ->
     {error, empty_tag};
 deregister_tag(Tag) when is_binary(Tag) ->
     try
-        sc_push_reg_db:delete_push_regs_by_tags([Tag])
+        exec_txn(fun(C) -> ?SPRDB:delete_push_regs_by_tags(C, [Tag]) end)
     catch
         _:Reason ->
             {error, Reason}
@@ -215,7 +126,7 @@ deregister_tag(Tag) when is_binary(Tag) ->
 -spec deregister_tags(list(binary())) -> ok | {error, term()}.
 deregister_tags(Tags) when is_list(Tags) ->
     try
-        sc_push_reg_db:delete_push_regs_by_tags(Tags)
+        exec_txn(fun(C) -> ?SPRDB:delete_push_regs_by_tags(C, Tags) end)
     catch
         _:Reason ->
             {error, Reason}
@@ -227,7 +138,7 @@ deregister_device_id(<<>>) ->
     {error, empty_device_id};
 deregister_device_id(DeviceID) when is_binary(DeviceID) ->
     try
-        sc_push_reg_db:delete_push_regs_by_device_ids([DeviceID])
+        exec_txn(fun(C) -> ?SPRDB:delete_push_regs_by_device_ids(C, [DeviceID]) end)
     catch
         _:Reason ->
             {error, Reason}
@@ -237,19 +148,19 @@ deregister_device_id(DeviceID) when is_binary(DeviceID) ->
 -spec deregister_device_ids(list(binary())) -> ok | {error, term()}.
 deregister_device_ids(DeviceIDs) when is_list(DeviceIDs) ->
     try
-        sc_push_reg_db:delete_push_regs_by_device_ids(DeviceIDs)
+        exec_txn(fun(C) -> ?SPRDB:delete_push_regs_by_device_ids(C, DeviceIDs) end)
     catch
         _:Reason ->
             {error, Reason}
     end.
 
 %% @doc Deregister all registrations with common service+push token
--spec deregister_svc_tok(sc_push_reg_db:svc_tok_key()) -> ok | {error, term()}.
+-spec deregister_svc_tok(?SPRDB:svc_tok_key()) -> ok | {error, term()}.
 deregister_svc_tok({_, <<>>}) ->
     {error, empty_token};
 deregister_svc_tok({_, <<_/binary>>} = SvcTok) ->
     try
-        sc_push_reg_db:delete_push_regs_by_svc_toks([make_svc_tok(SvcTok)])
+        exec_txn(fun(C) -> ?SPRDB:delete_push_regs_by_svc_toks(C, [make_svc_tok(SvcTok)]) end)
     catch
         _:Reason ->
             {error, Reason}
@@ -259,39 +170,40 @@ deregister_svc_tok({_, <<_/binary>>} = SvcTok) ->
 %% deregistration timestamp (only APNS provides timestamps at present.
 %% Timestamps from APN are in millseconds since the epoch.
 -spec update_invalid_timestamp_by_svc_tok(SvcTok, Timestamp) -> ok | {error, term()}
-    when SvcTok :: sc_push_reg_db:svc_tok_key(), Timestamp :: non_neg_integer().
+    when SvcTok :: ?SPRDB:svc_tok_key(), Timestamp :: non_neg_integer().
 update_invalid_timestamp_by_svc_tok({_, <<>>}, _Timestamp) ->
     {error, empty_token};
 update_invalid_timestamp_by_svc_tok({_, <<_/binary>>} = SvcTok, Timestamp) when is_integer(Timestamp) ->
     try
-        sc_push_reg_db:update_invalid_timestamps_by_svc_toks([{make_svc_tok(SvcTok), Timestamp}])
+        PgSvcTok = make_svc_tok(SvcTok),
+        exec_txn(fun(C) -> ?SPRDB:update_invalid_timestamps_by_svc_toks(C, [{PgSvcTok, Timestamp}]) end)
     catch
         _:Reason ->
             {error, Reason}
     end.
 
 %% @doc Deregister all registrations corresponding to list of service-tokens.
--spec deregister_svc_toks([sc_push_reg_db:svc_tok_key()]) -> ok | {error, term()}.
+-spec deregister_svc_toks([?SPRDB:svc_tok_key()]) -> ok | {error, term()}.
 deregister_svc_toks(SvcToks) when is_list(SvcToks) ->
     try
-        sc_push_reg_db:delete_push_regs_by_svc_toks(to_svc_toks(SvcToks))
+        exec_txn(fun(C) -> ?SPRDB:delete_push_regs_by_svc_toks(C, to_svc_toks(SvcToks)) end)
     catch
         _:Reason ->
             {error, Reason}
     end.
 
 %% @doc Deregister by id.
--spec deregister_id(sc_push_reg_db:reg_id_key()) -> ok | {error, term()}.
+-spec deregister_id(?SPRDB:reg_id_key()) -> ok | {error, term()}.
 deregister_id(ID) ->
     deregister_ids([ID]).
 
 %% @doc Deregister using list of ids.
--spec deregister_ids([sc_push_reg_db:reg_id_key()]) -> ok | {error, term()}.
+-spec deregister_ids([?SPRDB:reg_id_key()]) -> ok | {error, term()}.
 deregister_ids([]) ->
     ok;
 deregister_ids([{<<_/binary>>, <<_/binary>>}|_] = IDs) ->
     try
-        sc_push_reg_db:delete_push_regs_by_ids(to_ids(IDs))
+        exec_txn(fun(C) -> ?SPRDB:delete_push_regs_by_ids(C, to_ids(IDs)) end)
     catch
         _:Reason ->
             {error, Reason}
@@ -306,10 +218,10 @@ get_registration_info(Tag) ->
 
 %% @doc Get registration information by unique id.
 %% @see make_id/2
--spec get_registration_info_by_id(sc_push_reg_db:reg_id_key()) ->
+-spec get_registration_info_by_id(?SPRDB:reg_id_key()) ->
     sc_types:reg_proplist() | notfound.
 get_registration_info_by_id(ID) ->
-    sc_push_reg_db:get_registration_info_by_id(ID).
+    exec_txn(fun(C) -> ?SPRDB:get_registration_info_by_id(C, ID) end).
 
 %% @equiv get_registration_info_by_id/1
 -spec get_registration_info_by_id(bin_or_str(), bin_or_str()) ->
@@ -321,20 +233,20 @@ get_registration_info_by_id(DeviceID, Tag) ->
 -spec get_registration_info_by_tag(binary()) ->
     list(sc_types:reg_proplist()) | notfound.
 get_registration_info_by_tag(Tag) ->
-    sc_push_reg_db:get_registration_info_by_tag(Tag).
+    exec_txn(fun(C) -> ?SPRDB:get_registration_info_by_tag(C, Tag) end).
 
 %% @doc Get registration information by device_id.
 -spec get_registration_info_by_device_id(binary()) ->
     list(sc_types:reg_proplist()) | notfound.
 get_registration_info_by_device_id(DeviceID) ->
-    sc_push_reg_db:get_registration_info_by_device_id(DeviceID).
+    exec_txn(fun(C) -> ?SPRDB:get_registration_info_by_device_id(C, DeviceID) end).
 
 %% @doc Get registration information by service-token
 %% @see make_svc_tok/2
--spec get_registration_info_by_svc_tok(sc_push_reg_db:svc_tok_key()) ->
+-spec get_registration_info_by_svc_tok(?SPRDB:svc_tok_key()) ->
     sc_types:reg_proplist() | notfound.
 get_registration_info_by_svc_tok(SvcTok) ->
-    sc_push_reg_db:get_registration_info_by_svc_tok(SvcTok).
+    exec_txn(fun(C) -> ?SPRDB:get_registration_info_by_svc_tok(C, SvcTok) end).
 
 -spec get_registration_info_by_svc_tok(atom(), binary()) ->
     sc_types:reg_proplist() | notfound.
@@ -344,18 +256,18 @@ get_registration_info_by_svc_tok(Svc, Tok) ->
 %% @doc Validate push registration proplist.
 -spec is_valid_push_reg(list()) -> boolean().
 is_valid_push_reg(PL) ->
-    sc_push_reg_db:is_valid_push_reg(PL).
+    exec_txn(fun(C) -> ?SPRDB:is_valid_push_reg(C, PL) end).
 
 %% @doc Create a unique id from device_id and tag.
 -compile({inline, [{make_id, 2}]}).
--spec make_id(bin_or_str(), bin_or_str()) -> sc_push_reg_db:reg_id_key().
+-spec make_id(bin_or_str(), bin_or_str()) -> ?SPRDB:reg_id_key().
 make_id(DeviceID, Tag) ->
-    sc_push_reg_db:make_id(DeviceID, Tag).
+    exec_txn(fun(C) -> ?SPRDB:make_id(C, DeviceID, Tag) end).
 
 %% @equiv make_svc_tok/2
 -compile({inline, [{make_svc_tok, 1}]}).
--spec make_svc_tok({atom_or_str(), bin_or_str()} | sc_push_reg_db:svc_tok_key())
-    -> sc_push_reg_db:svc_tok_key().
+-spec make_svc_tok({atom_or_str(), bin_or_str()} | ?SPRDB:svc_tok_key())
+    -> ?SPRDB:svc_tok_key().
 make_svc_tok({Svc, Tok} = SvcTok) when is_atom(Svc), is_binary(Tok) ->
     SvcTok;
 make_svc_tok({Svc, Tok}) ->
@@ -363,13 +275,33 @@ make_svc_tok({Svc, Tok}) ->
 
 %% @doc Create service-token key
 -compile({inline, [{make_svc_tok, 2}]}).
--spec make_svc_tok(atom_or_str(), bin_or_str()) -> sc_push_reg_db:svc_tok_key().
+-spec make_svc_tok(atom_or_str(), bin_or_str()) -> ?SPRDB:svc_tok_key().
 make_svc_tok(Svc, Tok) ->
-    sc_push_reg_db:make_svc_tok(Svc, Tok).
+    exec_txn(fun(C) -> ?SPRDB:make_svc_tok(C, Svc, Tok) end).
 
 %%====================================================================
 %% Internal functions
 %%====================================================================
+init([]) ->
+    {ok, App} = application:get_application(?MODULE),
+    case application:get_env(App, db_pools, undefined) of
+        [_|_] = Pools ->
+            _ = lager:info("Push registration db pools are ~p", [Pools]),
+            MapSpec = fun({Name, SizeArgs, WorkerArgs}) ->
+                              PoolArgs = [{name, {local, Name}},
+                                          {worker_module, sc_push_reg_db}] ++ SizeArgs,
+                              poolboy:child_spec(Name, PoolArgs, WorkerArgs)
+                      end,
+            PoolSpecs = lists:map(MapSpec, Pools),
+            _ = lager:debug("Pool specs: ~p", [PoolSpecs]),
+            {ok, {{one_for_one, 10, 10}, PoolSpecs}};
+        undefined ->
+            {error, {missing_required_env_var, db_pools}};
+        [] ->
+            {error, db_pools_cannot_be_empty}
+    end.
+
+
 -compile({inline, [{to_ids, 1}]}).
 to_ids(IDs) ->
     [make_id(DeviceID, Tag) || {DeviceID, Tag} <- IDs].
@@ -378,3 +310,6 @@ to_ids(IDs) ->
 to_svc_toks(SvcToks) ->
     [make_svc_tok(Svc, Tok) || {Svc, Tok} <- SvcToks].
 
+-compile({inline, [{exec_txn, 1}]}).
+exec_txn(Txn) when is_function(Txn, 1) ->
+    poolboy:transaction(?POOL_NAME, Txn).

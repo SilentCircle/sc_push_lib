@@ -287,6 +287,7 @@ code_change(_OldVsn, State, _Extra) ->
 %% @end
 %%--------------------------------------------------------------------
 create_tables(Nodes) ->
+    mnesia:start(),
     Res = mnesia:create_table(sc_config,
         [
             {ram_copies, Nodes},
@@ -299,7 +300,7 @@ create_tables(Nodes) ->
         {atomic, ok} ->
             ok;
         {aborted, {already_exists, _}} ->
-                ok
+            ok
     end.
 
 %%--------------------------------------------------------------------

@@ -467,10 +467,10 @@ from_posix_time_ms(TimestampMs) ->
                       {stop, Reason::term()} |
                       'ignore'
                       .
-init(Args) ->
+init([_|_]=Args) ->
     erlang:process_flag(trap_exit, true),
-    DbMod = proplists:get_value(db_mod, Args),
-    DbConfig = proplists:get_value(db_config, Args),
+    DbMod = sc_util:req_val(db_mod, Args),
+    DbConfig = sc_util:req_val(db_config, Args),
     {ok, DbCtx} = DbMod:db_init(DbConfig),
     {ok, #?S{db_mod = DbMod,
              db_config = DbConfig,
@@ -528,7 +528,7 @@ handle_call({delete_push_regs_by_tags, Tags}, _From,
             #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
     Reply = Mod:delete_push_regs_by_tags(Ctx, Tags),
     {reply, Reply, St};
-handle_call({update_invalid_timestamp_by_svc_toks, SvcToksTs},
+handle_call({update_invalid_timestamps_by_svc_toks, SvcToksTs},
             _From, #?S{db_mod=Mod, db_ctx=Ctx}=St)->
     Reply = Mod:update_invalid_timestamps_by_svc_toks(Ctx, SvcToksTs),
     {reply, Reply, St};

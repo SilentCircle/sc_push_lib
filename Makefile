@@ -31,7 +31,7 @@ compile: $(REBAR)
 	$(REBAR) do clean, compile
 
 run: compile
-	$(REBAR) shell --name sc_push_lib --setcookie scpf
+	$(REBAR) shell --name sc_push_lib --setcookie scpf --config config/shell.config --apps sc_push_lib
 
 clean: $(REBAR) docclean
 	$(REBAR) clean
