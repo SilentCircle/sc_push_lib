@@ -75,7 +75,7 @@
         app_id = <<>> :: binary(), % iOS AppBundleID, Android package
         dist = <<>> :: binary(), % distribution <<>> is same as <<"prod">>, or <<"dev">>
         modified = {0, 0, 0} :: erlang:timestamp(),
-        last_invalid_on = {0, 0, 0} :: erlang:timestamp()
+        last_invalid_on = undefined :: undefined | erlang:timestamp()
     }).
 
 -type push_reg_list() :: list(#sc_pshrg{}).
@@ -195,7 +195,7 @@ get_registration_info_by_device_id(_Ctx, DeviceID) ->
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by unique id.
-%% @see sc_push_reg_db:make_id/2
+%% @see sc_push_reg_api:make_id/2
 -spec get_registration_info_by_id(ctx(), ?SPRDB:reg_id_key()) ->
     list(sc_types:reg_proplist()) | notfound.
 get_registration_info_by_id(_Ctx, ID) ->
@@ -203,7 +203,7 @@ get_registration_info_by_id(_Ctx, ID) ->
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by service-token.
-%% @see sc_push_reg_db:make_svc_tok/2
+%% @see sc_push_reg_api:make_svc_tok/2
 -spec get_registration_info_by_svc_tok(ctx(), ?SPRDB:svc_tok_key()) ->
     list(sc_types:reg_proplist()) | notfound.
 get_registration_info_by_svc_tok(_Ctx, {_Service, _Token} = SvcTok) ->
@@ -270,10 +270,10 @@ make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist) ->
                     erlang:timestamp()) -> #sc_pshrg{}.
 make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist, Modified) ->
     #sc_pshrg{
-        id = ?SPRDB:make_id(DeviceId, Tag),
+        id = sc_push_reg_api:make_id(DeviceId, Tag),
         device_id = DeviceId,
         tag = sc_util:to_bin(Tag),
-        svc_tok = ?SPRDB:make_svc_tok(Service, Token),
+        svc_tok = sc_push_reg_api:make_svc_tok(Service, Token),
         app_id = sc_util:to_bin(AppId),
         dist = sc_util:to_bin(Dist),
         modified = Modified
@@ -460,7 +460,7 @@ reregister_ids_txn() ->
 reregister_one_id(ID, NewTok) ->
     case mnesia:read(sc_pshrg, ID, write) of
         [#sc_pshrg{svc_tok = {Svc, _}} = R] ->
-            R1 = R#sc_pshrg{svc_tok = ?SPRDB:make_svc_tok(Svc, NewTok)},
+            R1 = R#sc_pshrg{svc_tok = sc_push_reg_api:make_svc_tok(Svc, NewTok)},
             write_rec(R1);
         [] -> % Does not exist, so that's fine
             ok
@@ -489,13 +489,13 @@ reregister_svc_toks_impl(OldSvcTok, NewTok) ->
 %%--------------------------------------------------------------------
 %% MUST be called in a transaction
 reregister_one_svc_tok(NewTok, #sc_pshrg{svc_tok = {Svc, OldTok}} = R0) ->
-    NewSvcTok = ?SPRDB:make_svc_tok(Svc, NewTok),
+    NewSvcTok = sc_push_reg_api:make_svc_tok(Svc, NewTok),
     % If old token same as old device ID, change device ID too
     % for legacy records
     R1 = case R0#sc_pshrg.id of
         {OldDeviceId, OldTag} when OldDeviceId =:= OldTok ->
             delete_rec(R0), % Delete old rec
-            R0#sc_pshrg{id = ?SPRDB:make_id(NewTok, OldTag),
+            R0#sc_pshrg{id = sc_push_reg_api:make_id(NewTok, OldTag),
                         device_id = NewTok,
                         svc_tok = NewSvcTok};
         _ ->

@@ -17,7 +17,8 @@
 suite() -> [
         {timetrap, {seconds, 30}},
         {require, registration},
-        {require, databases}
+        {require, databases},
+        {require, connect_info}
     ].
 
 %%--------------------------------------------------------------------
@@ -26,8 +27,11 @@ init_per_suite(Config) ->
     ct:pal("Registration: ~p~n", [Registration]),
     Databases = ct:get_config(databases),
     ct:pal("Databases: ~p~n", [Databases]),
+    ConnectInfo = ct:get_config(connect_info),
+    ct:pal("connect_info config: ~p~n", [ConnectInfo]),
     [{registration, Registration},
-     {databases, Databases} | Config].
+     {databases, Databases},
+     {connect_info, ConnectInfo} | Config].
 
 %%--------------------------------------------------------------------
 end_per_suite(_Config) ->
@@ -36,8 +40,8 @@ end_per_suite(_Config) ->
 %%--------------------------------------------------------------------
 init_per_group(Group, Config) when Group =:= internal_db;
                                    Group =:= external_db ->
-    DBs = value(databases, Config),
-    DBInfo = value(Group, DBs),
+    DBMap = value(databases, Config),
+    DBInfo = maps:get(Group, DBMap),
     lists:keystore(dbinfo, 1, Config, {dbinfo, DBInfo});
 init_per_group(_Group, Config) ->
     Config.
@@ -48,9 +52,14 @@ end_per_group(_GroupName, _Config) ->
 
 %%--------------------------------------------------------------------
 init_per_testcase(_Case, Config) ->
+    DBInfo = value(dbinfo, Config),
+
     ok = application:ensure_started(sasl),
     _ = application:load(lager),
     [ok = application:set_env(lager, K, V) || {K, V} <- lager_config(Config)],
+    ok = application:set_env(sc_push_lib, db_pools, db_pools(DBInfo, Config)),
+    {ok, DbPools} = application:get_env(sc_push_lib, db_pools),
+    ct:pal("init_per_testcase: DbPools: ~p", [DbPools]),
     db_create(Config),
     {ok, Apps} = application:ensure_all_started(sc_push_lib),
     Started = {apps, [sasl | Apps]},
@@ -60,7 +69,9 @@ init_per_testcase(_Case, Config) ->
 end_per_testcase(_Case, Config) ->
     Apps = lists:reverse(value(apps, Config)),
     ct:pal("Config:~n~p~n", [Config]),
-    _ = [ok = application:stop(App) || App <- Apps],
+    lists:foreach(fun(App) ->
+                          ok = application:stop(App)
+                  end, Apps),
     code:purge(lager_console_backend), % ct gives error otherwise
     db_destroy(Config),
     Config.
@@ -170,7 +181,7 @@ is_valid_push_reg_test(Config) ->
     DeviceId = <<"test_device_id">>,
 
     GoodProps = sc_push_reg_db:make_sc_push_props(Service, Token, DeviceId,
-                                                  Tag, AppId, Dist, 1,
+                                                  Tag, AppId, Dist,
                                                   erlang:timestamp()),
 
     true = sc_push_reg_api:is_valid_push_reg(GoodProps),
@@ -203,7 +214,7 @@ make_push_props_test(Config) ->
     Dist = value(dist, Props),
     DeviceId = value(device_id, Props),
     Modified = value(modified, Props),
-    LastInvalidOn = value(last_invalid_on, Props),
+    LastInvalidOn = proplists:get_value(last_invalid_on, Props, undefined),
 
     %% Check that it will work from strings, too (except modified)
     Props1 = sc_push_reg_db:make_sc_push_props(atom_to_list(Service),
@@ -221,7 +232,7 @@ make_push_props_test(Config) ->
     Dist = value(dist, Props1),
     DeviceId = value(device_id, Props1),
     Modified = value(modified, Props1),
-    LastInvalidOn = value(last_invalid_on, Props1),
+    LastInvalidOn = proplists:get_value(last_invalid_on, Props1, undefined),
 
     Config.
 
@@ -581,14 +592,15 @@ value(Key, Config) when is_list(Config) ->
 make_n_reg_ids(N) ->
     [make_reg_id_n(Int) || Int <- lists:seq(1, N)].
 
+%% "dev" is no longer supported as a dist type.
 make_reg_id_n(N) ->
     sc_push_reg_db:make_sc_push_props(oneof([apns, gcm]),
                                       make_binary(<<"tok">>, N),
                                       make_binary(<<"some_uuid">>, N),
                                       make_binary(<<"tag">>, N),
                                       make_binary(<<"app_id">>, N),
-                                      oneof([<<"prod">>, <<"dev">>]),
-                                      1, erlang:timestamp()
+                                      <<"prod">>,
+                                      erlang:timestamp()
                                     ).
 
 make_binary(<<BinPrefix/binary>>, N) when is_integer(N), N >= 0 ->
@@ -627,29 +639,57 @@ from_posix_time_ms(TimestampMs) ->
 %%--------------------------------------------------------------------
 db_create(Config) ->
     DBInfo = value(dbinfo, Config),
-    DB = value(db, DBInfo),
+    DB = maps:get(db, DBInfo),
     db_create(DB, DBInfo, Config).
 
-db_create(postgres, DBInfo, Config) ->
-    db_create(mnesia, DBInfo, Config),
-    ct:fail(no_external_db);
 db_create(mnesia, _DBInfo, Config) ->
     PrivDir = value(priv_dir, Config), % Standard CT variable
     MnesiaDir = filename:join(PrivDir, "mnesia"),
     ok = application:set_env(mnesia, dir, MnesiaDir),
     db_destroy(mnesia, _DBInfo, Config),
-    ok = mnesia:create_schema([node()]).
+    ok = mnesia:create_schema([node()]);
+db_create(DB, DBInfo, Config) ->
+    db_create(mnesia, DBInfo, Config),
+    clear_external_db(DB, DBInfo, Config).
 
 %%--------------------------------------------------------------------
 db_destroy(Config) ->
     DBInfo = value(dbinfo, Config),
-    DB = value(db, DBInfo),
+    DB = maps:get(db, DBInfo),
     db_destroy(DB, DBInfo, Config).
 
-db_destroy(postgres, DBInfo, Config) ->
-    db_destroy(mnesia, DBInfo, Config),
-    ct:fail(no_postgres_support);
 db_destroy(mnesia, _DBInfo, _Config) ->
     mnesia:stop(),
-    ok = mnesia:delete_schema([node()]).
+    ok = mnesia:delete_schema([node()]);
+db_destroy(DB, DBInfo, Config) ->
+    db_destroy(mnesia, DBInfo, Config),
+    clear_external_db(DB, DBInfo, Config).
+
+%%--------------------------------------------------------------------
+clear_external_db(postgres, _DBInfo, Config) ->
+    ConnParams = db_config(postgres, Config),
+    Tables = ["scpf.push_tokens"],
+    {ok, Conn} = epgsql:connect(ConnParams),
+    lists:foreach(fun(Table) ->
+                          {ok, _} = epgsql:squery(Conn, "delete from " ++ Table)
+                  end, Tables),
+    ok = epgsql:close(Conn).
+
+%%--------------------------------------------------------------------
+db_pools(#{db := DB, mod := DBMod}, Config) ->
+    [
+     {sc_push_reg_pool, % name
+      [ % sizeargs
+       {size, 10},
+       {max_overflow, 20}
+      ],
+      [ % workerargs
+       {db_mod, DBMod},
+       {db_config, db_config(DB, Config)}
+      ]}
+    ].
+
+%%--------------------------------------------------------------------
+db_config(DB, Config) ->
+    maps:get(DB, value(connect_info, Config), []).
 

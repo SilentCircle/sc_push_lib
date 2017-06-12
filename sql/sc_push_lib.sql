@@ -1,18 +1,22 @@
-DROP USER IF EXISTS sc_push_lib_test;
-CREATE USER sc_push_lib_test
+DROP USER IF EXISTS scadmin;
+CREATE USER scadmin
     WITH SUPERUSER CREATEDB CREATEROLE REPLICATION
-    PASSWORD 'test';
+    PASSWORD 'changeme';
 
-DROP DATABASE IF EXISTS sc_push_lib_test;
-CREATE DATABASE sc_push_lib_test WITH OWNER sc_push_lib_test;
+CREATE DATABASE silentcircle WITH OWNER scadmin;
 
-\connect sc_push_lib_test
+\connect silentcircle
 
 --
--- Create schema
+-- Create schemas
 --
 
-CREATE SCHEMA IF NOT EXISTS scpf AUTHORIZATION sc_push_lib_test;
+CREATE SCHEMA IF NOT EXISTS kamailio AUTHORIZATION scadmin;
+CREATE SCHEMA IF NOT EXISTS scaccounts AUTHORIZATION scadmin;
+CREATE SCHEMA IF NOT EXISTS scaccountstest AUTHORIZATION scadmin;
+CREATE SCHEMA IF NOT EXISTS scpf AUTHORIZATION scadmin;
+CREATE SCHEMA IF NOT EXISTS scsrsdata AUTHORIZATION scadmin;
+CREATE SCHEMA IF NOT EXISTS sentry AUTHORIZATION scadmin;
 
 --
 -- Set up scpf schema
@@ -35,7 +39,6 @@ CREATE TABLE IF NOT EXISTS scpf.push_tokens (
   last_xscdevid VARCHAR(64) NOT NULL
 );
 CREATE INDEX ON scpf.push_tokens (uuid);
-CREATE INDEX ON scpf.push_tokens (type,token);
-CREATE INDEX ON scpf.push_tokens (last_xscdevid,uuid);
 CREATE UNIQUE INDEX push_tokens_match_idx ON scpf.push_tokens (uuid,type,token,appname);
 
+SET search_path = scpf, pg_catalog;

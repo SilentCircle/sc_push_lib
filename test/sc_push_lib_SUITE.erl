@@ -39,14 +39,25 @@ init_per_testcase(_Case, Config) ->
     _ = application:load(lager),
     [ok = application:set_env(lager, K, V) || {K, V} <- lager_config(Config)],
     db_create(Config),
-    {ok, Apps} = application:ensure_all_started(sc_push_lib),
+    ReqApps = [lager],
+    Apps = lists:foldl(fun(App, Acc) ->
+                               {ok, L} = application:ensure_all_started(App),
+                               L ++ Acc
+                       end, [], ReqApps),
     Started = {apps, [sasl | Apps]},
-    [Started | proplists:delete(apps, Config)].
+    {ok, Pid1} = sc_push_req_mgr:start_link(),
+    unlink(Pid1),
+    {ok, Pid2} = sc_config:start_link(),
+    unlink(Pid2),
+    Servers = {servers, [Pid1, Pid2]},
+    [Started, Servers | proplists:delete(servers, proplists:delete(apps, Config))].
 
 %%--------------------------------------------------------------------
 end_per_testcase(_Case, Config) ->
     Apps = lists:reverse(value(apps, Config)),
+    Servers = value(servers, Config),
     ct:pal("Config:~n~p~n", [Config]),
+    _ = [gen_server:stop(Pid) || Pid <- Servers],
     _ = [ok = application:stop(App) || App <- Apps],
     code:purge(lager_console_backend), % ct gives error otherwise
     db_destroy(Config),
@@ -320,5 +331,5 @@ db_create(Config) ->
     ok = mnesia:create_schema([node()]).
 
 %%--------------------------------------------------------------------
-db_destroy(Config) ->
+db_destroy(_Config) ->
     ok = mnesia:delete_schema([node()]).

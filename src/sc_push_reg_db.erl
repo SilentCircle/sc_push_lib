@@ -43,11 +43,9 @@
 
 % In-process API
 -export([
-         make_id/2,
          make_sc_push_props/7,
          make_sc_push_props/8,
          make_sc_push_props/9,
-         make_svc_tok/2,
          from_posix_time_ms/1
         ]).
 
@@ -97,7 +95,7 @@
                          {'device_id', binary()} |
                          {'tag', binary()} |
                          {'modified', tuple()} |
-                         {'last_invalid_on', tuple()} |
+                         {'last_invalid_on', undefined | tuple()} |
                          {'token', binary()}].
 
 
@@ -315,7 +313,7 @@ get_registration_info_by_device_id(Worker, DeviceID) ->
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by unique id.
-%% @see make_id/2
+%% @see:sc_push_reg_api: make_id/2
 -spec get_registration_info_by_id(pid(), reg_id_key()) ->
     list(sc_types:reg_proplist()) | notfound.
 get_registration_info_by_id(Worker, ID) ->
@@ -323,7 +321,7 @@ get_registration_info_by_id(Worker, ID) ->
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by service-token.
-%% @see make_svc_tok/2
+%% @see sc_push_reg_api:make_svc_tok/2
 -spec get_registration_info_by_svc_tok(pid(), svc_tok_key()) ->
     list(sc_types:reg_proplist()) | notfound.
 get_registration_info_by_svc_tok(Worker, SvcTok) ->
@@ -366,17 +364,6 @@ reregister_svc_toks(Worker, SvcToks) ->
 %%--------------------------------------------------------------------
 
 %%--------------------------------------------------------------------
-%% @doc Convert to an opaque registration ID key.
--spec make_id(binable(), binable()) -> reg_id_key().
-make_id(Id, Tag) ->
-    case {sc_util:to_bin(Id), sc_util:to_bin(Tag)} of
-        {<<_,_/binary>>, <<_,_/binary>>} = Key ->
-            Key;
-        _IdTag ->
-            throw({invalid_id_or_tag, {Id, Tag}})
-    end.
-
-%%--------------------------------------------------------------------
 %% @doc Create a property list from push registration data.
 -spec make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
                          LastModifiedOn) -> Result
@@ -386,8 +373,8 @@ make_id(Id, Tag) ->
       LastModifiedOn :: erlang:timestamp(), Result :: reg_db_props()
       .
 make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
-                   LastModifiedOn) ->
-    LastInvalidOn = {0, 0, 0},
+                   {_,_,_}=LastModifiedOn) ->
+    LastInvalidOn = undefined,
     make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
                        LastModifiedOn, LastInvalidOn).
 
@@ -398,11 +385,12 @@ make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
     when
       Service :: atomable(), Token :: binable(), DeviceId :: binable(),
       Tag :: binable(), AppId :: binable(), Dist :: binable(),
-      LastModifiedOn :: erlang:timestamp(), LastInvalidOn :: erlang:timestamp(),
+      LastModifiedOn :: erlang:timestamp(),
+      LastInvalidOn :: undefined | erlang:timestamp(),
       Result :: reg_db_props()
       .
-make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist, LastModifiedOn,
-                   LastInvalidOn) ->
+make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
+                   {_,_,_}=LastModifiedOn, LastInvalidOn) ->
     CreatedOn = erlang:timestamp(),
     make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
                        LastModifiedOn, LastInvalidOn, CreatedOn).
@@ -414,12 +402,15 @@ make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist, LastModifiedOn,
     when
       Service :: atomable(), Token :: binable(), DeviceId :: binable(),
       Tag :: binable(), AppId :: binable(), Dist :: binable(),
-      LastModifiedOn :: erlang:timestamp(), LastInvalidOn :: erlang:timestamp(),
+      LastModifiedOn :: erlang:timestamp(),
+      LastInvalidOn :: undefined | erlang:timestamp(),
       CreatedOn :: erlang:timestamp(),
       Result :: reg_db_props()
       .
-make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist, LastModifiedOn,
-                   LastInvalidOn, CreatedOn) ->
+make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
+                   {_,_,_}=LastModifiedOn,
+                   LastInvalidOn,
+                   {_,_,_}=CreatedOn) ->
     [
         {device_id, sc_util:to_bin(DeviceId)},
         {service, sc_util:to_atom(Service)},
@@ -431,14 +422,6 @@ make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist, LastModifiedOn,
         {modified, LastModifiedOn},
         {last_invalid_on, LastInvalidOn}
     ].
-
-%%--------------------------------------------------------------------
-%% @doc Convert to an opaque service-token key.
--spec make_svc_tok(atom_or_str(), binable()) -> svc_tok_key().
-make_svc_tok(Service, Token) when is_atom(Service) ->
-    {Service, sc_util:to_bin(Token)};
-make_svc_tok(Service, Token) when is_list(Service) ->
-    make_svc_tok(list_to_atom(Service), Token).
 
 %%--------------------------------------------------------------------
 %% @doc Convert timestamp in milliseconds from epoch to Erlang `now'

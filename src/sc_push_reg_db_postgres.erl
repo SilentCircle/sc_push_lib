@@ -214,7 +214,7 @@ get_registration_info_by_id(#?CTX{conn=Conn}, ID) ->
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by service-token.
-%% @see sc_push_reg_db:make_svc_tok/2
+%% @see sc_push_reg_api:make_svc_tok/2
 -spec get_registration_info_by_svc_tok(db_ctx(), ?SPRDB:svc_tok_key()) ->
     list(sc_types:reg_proplist()) | notfound.
 get_registration_info_by_svc_tok(#?CTX{conn=Conn}, {_Service, _Token} = SvcTok) ->
@@ -283,7 +283,6 @@ prepare_statements(Conn) ->
     PTQueries = push_tokens_queries(?DB_PUSH_TOKENS_TBL),
     case prepared_queries(Conn, PTQueries) of
         {PrepQs, []} ->
-            handle_error(pq(Conn, <<"delete_upsert_func">>, [])),
             handle_error(pq(Conn, <<"create_upsert_func">>, [])),
             {ok, maps:from_list([{S#statement.name, S} || S <- PrepQs])};
         {_, Errors} ->
@@ -387,9 +386,10 @@ push_reg_maps_to_props(Maps) ->
                                        get_tag(M),
                                        get_app_id(M),
                                        <<"prod">>,
-                                       get_created_on(M),
                                        get_modified(M),
-                                       get_last_invalid_on(M)) || M <- Maps].
+                                       get_last_invalid_on(M),
+                                       get_created_on(M)
+                                       ) || M <- Maps].
 
 %%--------------------------------------------------------------------
 pq(Conn, QueryName, Args) ->
@@ -414,17 +414,17 @@ epq(C, Q, Args) ->
       Conn :: conn(), Batch :: [{stmt(), [bind_param()]}],
       Result :: ok | {error, term()}.
 do_batch(Conn, Batch) ->
-    Res = epgsql:with_transaction(Conn,
-                                  fun(C) ->
-                                          epgsql:execute_batch(C, Batch)
-                                  end),
-    case Res of
-        {ok, _Count} ->
+    {ok, [], []} = epgsql:squery(Conn, "BEGIN"),
+    L = epgsql:execute_batch(Conn, Batch),
+    case lists:partition(fun(T) ->
+                                 element(1, T) =:= ok
+                         end, L) of
+        {_, []} -> % All good
+            {ok, [], []} = epgsql:squery(Conn, "COMMIT"),
             ok;
-        {ok, _Count, _Rows} -> % Ugh
-            ok;
-        Error ->
-            Error
+        {_, Errs} ->
+            epqsql:squery(Conn, "ROLLBACK"),
+            {error, Errs}
     end.
 
 %%--------------------------------------------------------------------
@@ -439,7 +439,7 @@ svc_to_type(Atom) -> sc_util:to_bin(Atom).
       Type :: binary(), Svc :: atom().
 type_to_svc(<<"iOS">>)     -> apns;
 type_to_svc(<<"Android">>) -> gcm;
-type_to_svc(Val)           -> throw({unknown_service, Val}).
+type_to_svc(Val)           -> sc_util:to_atom(Val). %% FIXME: Potential DoS
 
 %%--------------------------------------------------------------------
 -spec pg2scpf_maps(Columns, Rows) -> Result when

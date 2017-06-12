@@ -58,7 +58,7 @@
 %%--------------------------------------------------------------------
 %% Types
 %%--------------------------------------------------------------------
--type atom_or_str() :: atom() | string().
+-type atomable() :: atom() | binary() | string().
 -type bin_or_str() :: binary() | string().
 
 %%====================================================================
@@ -103,8 +103,11 @@ register_id([{_, _}|_] = Props) ->
 %% @doc Register a list of identities that should receive push notifications.
 -spec register_ids([sc_types:reg_proplist(), ...]) -> ok | {error, term()}.
 register_ids([[{_, _}|_]|_] = ListOfProplists) ->
-    try
-        exec_txn(fun(C) -> ?SPRDB:save_push_regs(C, ListOfProplists) end)
+    try exec_txn(fun(C) -> ?SPRDB:save_push_regs(C, ListOfProplists) end) of
+        {error, _}=Error ->
+            Error;
+        _ ->
+            ok
     catch
         _:Reason ->
             {error, Reason}
@@ -259,31 +262,28 @@ is_valid_push_reg(PL) ->
     exec_txn(fun(C) -> ?SPRDB:is_valid_push_reg(C, PL) end).
 
 %% @doc Create a unique id from device_id and tag.
--compile({inline, [{make_id, 2}]}).
 -spec make_id(bin_or_str(), bin_or_str()) -> ?SPRDB:reg_id_key().
-make_id(DeviceID, Tag) ->
-    exec_txn(fun(C) -> ?SPRDB:make_id(C, DeviceID, Tag) end).
+make_id(Id, Tag) ->
+    case {sc_util:to_bin(Id), sc_util:to_bin(Tag)} of
+        {<<_,_/binary>>, <<_,_/binary>>} = Key ->
+            Key;
+        _IdTag ->
+            throw({invalid_id_or_tag, {Id, Tag}})
+    end.
 
-%% @equiv make_svc_tok/2
--compile({inline, [{make_svc_tok, 1}]}).
--spec make_svc_tok({atom_or_str(), bin_or_str()} | ?SPRDB:svc_tok_key())
-    -> ?SPRDB:svc_tok_key().
-make_svc_tok({Svc, Tok} = SvcTok) when is_atom(Svc), is_binary(Tok) ->
-    SvcTok;
-make_svc_tok({Svc, Tok}) ->
-    make_svc_tok(Svc, Tok).
+%%--------------------------------------------------------------------
+%% @doc Convert to an opaque service-token key.
+-spec make_svc_tok(atomable(), bin_or_str()) -> ?SPRDB:svc_tok_key().
+make_svc_tok(Service, Token) ->
+    {sc_util:to_atom(Service), sc_util:to_bin(Token)}.
 
-%% @doc Create service-token key
--compile({inline, [{make_svc_tok, 2}]}).
--spec make_svc_tok(atom_or_str(), bin_or_str()) -> ?SPRDB:svc_tok_key().
-make_svc_tok(Svc, Tok) ->
-    exec_txn(fun(C) -> ?SPRDB:make_svc_tok(C, Svc, Tok) end).
 
 %%====================================================================
 %% Internal functions
 %%====================================================================
 init([]) ->
     {ok, App} = application:get_application(?MODULE),
+    _ = lager:info("App for ~p is ~p", [?MODULE, App]),
     case application:get_env(App, db_pools, undefined) of
         [_|_] = Pools ->
             _ = lager:info("Push registration db pools are ~p", [Pools]),
@@ -309,6 +309,13 @@ to_ids(IDs) ->
 -compile({inline, [{to_svc_toks, 1}]}).
 to_svc_toks(SvcToks) ->
     [make_svc_tok(Svc, Tok) || {Svc, Tok} <- SvcToks].
+
+%% @equiv make_svc_tok/2
+-compile({inline, [{make_svc_tok, 1}]}).
+-spec make_svc_tok({atomable(), bin_or_str()} | ?SPRDB:svc_tok_key())
+    -> ?SPRDB:svc_tok_key().
+make_svc_tok({Svc, Tok}) ->
+    make_svc_tok(Svc, Tok).
 
 -compile({inline, [{exec_txn, 1}]}).
 exec_txn(Txn) when is_function(Txn, 1) ->
