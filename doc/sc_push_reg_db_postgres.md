@@ -47,7 +47,7 @@ POSIX timestamp as sent by APNS.
 
 
 <pre><code>
-reg_id_key() = <a href="#type-reg_id_key">reg_id_key()</a>
+reg_id_key() = <a href="sc_push_reg_db.md#type-reg_id_key">sc_push_reg_db:reg_id_key()</a>
 </code></pre>
 
 

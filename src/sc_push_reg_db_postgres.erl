@@ -16,8 +16,7 @@
 
 -module(sc_push_reg_db_postgres).
 
-%% Causing warnings (why???)
-%%-behavior(sc_push_reg_db).
+-behavior(sc_push_reg_db).
 
 %% sc_push_reg_db callbacks
 -export([
@@ -92,7 +91,7 @@
 -type other_error() :: {error, term()}.
 -type scpf_error() :: {db_error, db, proplists:proplist()} |
                       {db_error, other, other_error()}.
--type reg_id_key() :: reg_id_key().
+-type reg_id_key() :: sc_push_reg_db:reg_id_key().
 -type reg_id_keys() :: sc_push_reg_db:reg_id_keys().
 -type push_reg_list() :: sc_push_reg_db:push_reg_list().
 -type svc_tok_key() :: sc_push_reg_db:svc_tok_key().
@@ -170,17 +169,7 @@ db_info(Ctx) ->
 -spec db_terminate(Ctx) -> Result when
       Ctx :: ctx(), Result :: ok.
 db_terminate(#?CTX{conn=Conn}) ->
-    try epgsql:close(Conn) of
-        ok ->
-            ok;
-        NotOk ->
-            lager:warning("epgsql:close/1 -> ~p", [NotOk])
-    catch
-        Class:Reason ->
-            lager:warning("epgsql:close/1 threw ~p", [{Class, Reason}])
-    end,
-    ok.
-
+    epgsql:close(Conn).
 
 %%--------------------------------------------------------------------
 %% @private
