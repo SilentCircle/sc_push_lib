@@ -37,7 +37,7 @@ clean: $(REBAR) docclean
 	$(REBAR) clean
 
 ct: $(REBAR)
-	REBAR_DIR=$(CURDIR) $(REBAR) do clean, ct --readable
+	REBAR_DIR=$(CURDIR) $(REBAR) do clean, ct --readable, cover -v
 
 ct_clean:
 	@rm -rf _build/test/logs/

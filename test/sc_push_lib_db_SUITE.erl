@@ -18,7 +18,8 @@ suite() -> [
         {timetrap, {seconds, 30}},
         {require, registration},
         {require, databases},
-        {require, connect_info}
+        {require, connect_info},
+        {require, lager}
     ].
 
 %%--------------------------------------------------------------------
@@ -29,9 +30,15 @@ init_per_suite(Config) ->
     ct:pal("Databases: ~p~n", [Databases]),
     ConnectInfo = ct:get_config(connect_info),
     ct:pal("connect_info config: ~p~n", [ConnectInfo]),
+    RawLagerConfig = ct:get_config(lager),
+    ct:pal("Raw lager config: ~p~n", [RawLagerConfig]),
+    LagerConfig = sc_push_lib_test_helper:lager_config(Config,
+                                                       RawLagerConfig),
+    ct:pal("lager config: ~p~n", [LagerConfig]),
     [{registration, Registration},
      {databases, Databases},
-     {connect_info, ConnectInfo} | Config].
+     {connect_info, ConnectInfo},
+     {lager, LagerConfig} | Config].
 
 %%--------------------------------------------------------------------
 end_per_suite(_Config) ->
@@ -53,10 +60,11 @@ end_per_group(_GroupName, _Config) ->
 %%--------------------------------------------------------------------
 init_per_testcase(_Case, Config) ->
     DBInfo = value(dbinfo, Config),
+    LagerConfig = value(lager, Config),
 
     ok = application:ensure_started(sasl),
     _ = application:load(lager),
-    [ok = application:set_env(lager, K, V) || {K, V} <- lager_config(Config)],
+    [ok = application:set_env(lager, K, V) || {K, V} <- LagerConfig],
     ok = application:set_env(sc_push_lib, db_pools, db_pools(DBInfo, Config)),
     {ok, DbPools} = application:get_env(sc_push_lib, db_pools),
     ct:pal("init_per_testcase: DbPools: ~p", [DbPools]),
@@ -545,41 +553,6 @@ svc_token_from_reg_props(RegPL) ->
     Svc = value(service, RegPL),
     Token = value(token, RegPL),
     sc_push_reg_api:make_svc_tok(Svc, Token).
-
-%%====================================================================
-%% Lager support
-%%====================================================================
-lager_config(Config) ->
-    PrivDir = value(priv_dir, Config), % Standard CT variable
-    ErrorLog = filename:join(PrivDir, "error.log"),
-    ConsoleLog = filename:join(PrivDir, "console.log"),
-    CrashLog = filename:join(PrivDir, "crash.log"),
-
-    [
-        %% What handlers to install with what arguments
-        {handlers, [
-                {lager_console_backend, info},
-                {lager_file_backend, [
-                        {file, ErrorLog},
-                        {level, error},
-                        {size, 10485760},
-                        {date, "$D0"},
-                        {count, 5}
-                    ]
-                },
-                {lager_file_backend, [
-                        {file, ConsoleLog},
-                        {level, info},
-                        {size, 10485760},
-                        {date, "$D0"},
-                        {count, 5}
-                    ]
-                }
-            ]
-        },
-        %% Whether to write a crash log, and where. Undefined means no crash logger.
-        {crash_log, CrashLog}
-    ].
 
 %%====================================================================
 %% General helper functions

@@ -14,12 +14,17 @@
 
 %%--------------------------------------------------------------------
 suite() -> [
-        {timetrap, {seconds, 30}}
+        {timetrap, {seconds, 30}},
+        {require, lager}
     ].
 
 %%--------------------------------------------------------------------
 init_per_suite(Config) ->
-    Config.
+    RawLagerConfig = ct:get_config(lager),
+    LagerConfig = sc_push_lib_test_helper:lager_config(Config,
+                                                       RawLagerConfig),
+    ct:pal("lager config: ~p~n", [LagerConfig]),
+    lists:keystore(lager, 1, Config, {lager, LagerConfig}).
 
 %%--------------------------------------------------------------------
 end_per_suite(_Config) ->
@@ -37,7 +42,8 @@ end_per_group(_GroupName, _Config) ->
 init_per_testcase(_Case, Config) ->
     ok = application:ensure_started(sasl),
     _ = application:load(lager),
-    [ok = application:set_env(lager, K, V) || {K, V} <- lager_config(Config)],
+    LagerConfig = value(lager, Config),
+    [ok = application:set_env(lager, K, V) || {K, V} <- LagerConfig],
     db_create(Config),
     ReqApps = [lager],
     Apps = lists:foldl(fun(App, Acc) ->
@@ -326,10 +332,10 @@ db_create(Config) ->
     PrivDir = value(priv_dir, Config), % Standard CT variable
     MnesiaDir = filename:join(PrivDir, "mnesia"),
     ok = application:set_env(mnesia, dir, MnesiaDir),
-    mnesia:stop(),
-    mnesia:delete_schema([node()]),
+    db_destroy(Config),
     ok = mnesia:create_schema([node()]).
 
 %%--------------------------------------------------------------------
 db_destroy(_Config) ->
+    mnesia:stop(),
     ok = mnesia:delete_schema([node()]).
