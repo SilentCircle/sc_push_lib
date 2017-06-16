@@ -50,7 +50,8 @@ init([]) ->
            ]}
     }.
 
--spec internal_db_init() -> ok.
+-spec internal_db_init() -> Result when
+      Result :: {ok, Dir}, Dir :: string().
 internal_db_init() ->
     Me = node(),
     Dir = case application:get_env(mnesia, dir) of
@@ -61,8 +62,8 @@ internal_db_init() ->
               {ok, D} ->
                   D
           end,
-    lager:info("Mnesia database dir: ~p", [Dir]),
-    lager:info("Initializing mnesia database on ~p", [Me]),
+    lager:debug("Mnesia database dir: ~p", [Dir]),
+    lager:debug("Initializing mnesia database on ~p", [Me]),
 
     mnesia:stop(),
     DbNodes = mnesia:system_info(db_nodes),
@@ -77,20 +78,21 @@ internal_db_init() ->
     end,
     case mnesia:system_info(use_dir) of % Is there a disc-based schema?
         false ->
-            lager:info("About to create schema on ~p", [Me]),
+            lager:debug("About to create schema on ~p", [Me]),
             case mnesia:create_schema([Me]) of
                 ok ->
-                    lager:info("Created mnesia database schema on ~p", [Me]);
+                    lager:debug("Created mnesia database schema on ~p", [Me]);
                 {error, {Me, {already_exists, Me}}} ->
-                    lager:info("mnesia schema already exists on ~p", [Me])
+                    lager:debug("mnesia schema already exists on ~p", [Me])
             end;
         true ->
-            lager:info("No mnesia schema creation required.")
+            lager:debug("No mnesia schema creation required.")
     end,
     lager:info("Starting mnesia database in dir ~p on node ~p", [Dir, Me]),
     ok = mnesia:start(),
+    lager:info("Waiting for mnesia tables on node ~p", [Me]),
     mnesia:wait_for_tables(mnesia:system_info(local_tables), infinity),
-    lager:info("Database initialized on ~p", [Me]),
+    lager:info("Mnesia database started on ~p", [Me]),
     mnesia:stop(),
     {ok, Dir}.
 

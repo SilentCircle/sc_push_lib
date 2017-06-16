@@ -283,10 +283,10 @@ make_svc_tok(Service, Token) ->
 %%====================================================================
 init([]) ->
     {ok, App} = application:get_application(?MODULE),
-    _ = lager:info("App for ~p is ~p", [?MODULE, App]),
+    _ = lager:debug("App for ~p is ~p", [?MODULE, App]),
     case application:get_env(App, db_pools, undefined) of
         [_|_] = Pools ->
-            _ = lager:info("Push registration db pools are ~p", [Pools]),
+            _ = lager:debug("Push registration db pools are ~p", [Pools]),
             MapSpec = fun({Name, SizeArgs, WorkerArgs}) ->
                               PoolArgs = [{name, {local, Name}},
                                           {worker_module, sc_push_reg_db}] ++ SizeArgs,

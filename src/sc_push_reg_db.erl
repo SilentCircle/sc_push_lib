@@ -14,6 +14,17 @@
 %%% limitations under the License.
 %%% ==========================================================================
 
+%%% ==========================================================================
+%%% @doc
+%%% This module defines the callback interface for all database-specific
+%%% backends such as `sc_push_reg_db_postgres'.
+%%%
+%%% This is an active module that supports connection pooling.
+%%% @see sc_push_reg_db_mnesia
+%%% @see sc_push_reg_db_postgres
+%%% @end
+%%% ==========================================================================
+
 -module(sc_push_reg_db).
 
 -behavior(poolboy_worker).
@@ -242,15 +253,21 @@ stop(ServerRef) ->
     gen_server:stop(ServerRef).
 
 %%--------------------------------------------------------------------
-%% @doc Return a list of property lists of all registrations.
+%% @private
 %% @deprecated For debug only
+%% @doc Return a list of property lists of all registrations.
+%% @end
+%%--------------------------------------------------------------------
 -spec all_registration_info(pid()) -> [sc_types:reg_proplist()].
 all_registration_info(Worker) ->
     gen_server:call(Worker, all_registration_info).
 
 %%--------------------------------------------------------------------
-%% @doc Return a list of all push registration records.
+%% @private
 %% @deprecated For debug only.
+%% @doc Return a list of all push registration records.
+%% @end
+%%--------------------------------------------------------------------
 -spec all_reg(pid()) -> push_reg_list().
 all_reg(Worker) ->
     gen_server:call(Worker, all_reg).
@@ -602,10 +619,10 @@ handle_info(_Info, State) ->
 -spec terminate(Reason::terminate_reason(),
                 State::state()) -> no_return().
 terminate(shutdown, #?S{db_mod=Mod, db_ctx=Ctx}) ->
-    lager:info("~p terminated via shutdown", [Mod]),
+    lager:debug("~p terminated via shutdown", [Mod]),
     (catch Mod:db_terminate(Ctx));
 terminate(Reason, St) ->
-    lager:info("~p terminated for reason ~p", [St#?S.db_mod, Reason]).
+    lager:warning("~p terminated for reason ~p", [St#?S.db_mod, Reason]).
 
 %%--------------------------------------------------------------------
 %% @private

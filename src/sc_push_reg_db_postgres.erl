@@ -65,24 +65,57 @@
 -define(DB_PUSH_TOKENS_TBL_BASE, "push_tokens").
 -define(DB_PUSH_TOKENS_TBL, ?DB_SCHEMA_PREFIX ?DB_PUSH_TOKENS_TBL_BASE).
 -define(SPRDB, sc_push_reg_db).
+-define(EPOCH_GREGORIAN_SECONDS, 62167219200). % Jan 1, 1970 00:00:00 GMT
 
 -define(CTX, ?MODULE).
--record(?CTX, {conn,
-               config,
-               prep_qs = #{} % prepared queries, keyed by query name
+-record(?CTX, {conn          :: epgsql:connection(),
+               config        :: proplists:proplist(),
+               prep_qs = #{} :: map() % prepared queries, keyed by query name
               }).
 
--type db_ctx() :: #?CTX{}.
+-type ctx() :: #sc_push_reg_db_postgres{}.
 -type conn() :: epgsql:connection().
 -type stmt() :: #statement{}.
 -type col()  :: epqsql:column().
 -type bind_param() :: epgsql:bind_param().
+-type reg_id_key() :: reg_id_key().
+-type reg_id_keys() :: sc_push_reg_db:reg_id_keys().
+-type push_reg_list() :: sc_push_reg_db:push_reg_list().
+-type svc_tok_key() :: sc_push_reg_db:svc_tok_key().
+-type posix_timestamp_milliseconds() :: non_neg_integer(). % POSIX timestamp as sent by APNS.
+-type svc_tok_timestamp() :: {svc_tok_key(), posix_timestamp_milliseconds()}.
+-type reg_proplist() :: sc_types:reg_proplist().
+-type reg_proplists() :: [reg_proplist()].
+-type nonempty_reg_proplists() :: [reg_proplist(), ...].
+
+-type hour() :: 0..23.
+-type minute() :: 0..59.
+-type float_sec() :: float().
 
 %%====================================================================
 %% API
 %%====================================================================
+%%--------------------------------------------------------------------
+%% @doc Initialize the database connection.
+%%
+%% Return an opaque context for use with the other API calls.
+%%
+%% <dl>
+%%  <dt>`Config'</dt><dd>A property list containing at least
+%%  the following properties:
+%%  <dl>
+%%    <dt>`hostname :: string()'</dt><dd>Postgres host name</dd>
+%%    <dt>`database :: string()'</dt><dd>Database name</dd>
+%%    <dt>`username :: string()'</dt><dd>User (role) name</dd>
+%%    <dt>`password :: string()'</dt><dd>User/role password</dd>
+%%  </dl>
+%%  </dd>
+%%  <dt>`Context'</dt><dd>An opaque term returned to the caller.</dd>
+%% </dl>
+%% @end
+%%--------------------------------------------------------------------
 -spec db_init(Config) -> {ok, Context} | {error, Reason} when
-      Config :: proplists:proplist(), Context :: db_ctx(),
+      Config :: proplists:proplist(), Context :: ctx(),
       Reason :: term().
 db_init(Config) when is_list(Config) ->
     Hostname = proplists:get_value(hostname, Config),
@@ -99,35 +132,66 @@ db_init(Config) when is_list(Config) ->
     end.
 
 %%--------------------------------------------------------------------
+%% @doc Get information about the database context passed in `Ctx'.
+%%
+%% Return a property list as follows:
+%%
+%% <dl>
+%%   <dt>`conn :: pid()'</dt><dd>Postgres connection pid</dd>
+%%   <dt>`config :: proplist()'</dt><dd>Value passed to db_init/1</dd>
+%%   <dt>`extra :: term()'</dt>
+%%    <dd>Extra information. This is currently a map of prepared statements,
+%%    but may change without notice.</dd>
+%% </dl>
+%% @end
+%%--------------------------------------------------------------------
 -spec db_info(Ctx) -> Props when
-      Ctx :: db_ctx(), Props :: proplists:proplist().
+      Ctx :: ctx(), Props :: proplists:proplist().
 db_info(Ctx) ->
     [{conn, Ctx#?CTX.conn},
      {config, Ctx#?CTX.config},
      {extra, Ctx#?CTX.prep_qs}].
 
 %%--------------------------------------------------------------------
--spec db_terminate(db_ctx()) -> term().
+%% @doc Terminate the database connection.
+%% The return value has no significance.
+%% @end
+%%--------------------------------------------------------------------
+-spec db_terminate(Ctx) -> Result when
+      Ctx :: ctx(), Result :: any().
 db_terminate(#?CTX{conn=Conn}) ->
     epgsql:close(Conn).
 
 %%--------------------------------------------------------------------
+%% @private
 %% @doc Return a list of property lists of all registrations.
 %% @deprecated For debug only
--spec all_registration_info(db_ctx()) -> [sc_types:reg_proplist()].
+%% @end
+%%--------------------------------------------------------------------
+-spec all_registration_info(Ctx) -> ListOfRegs when
+      Ctx :: ctx(), ListOfRegs :: [reg_proplist()].
 all_registration_info(#?CTX{conn=Conn}) ->
     db_all_regs(Conn).
 
 %%--------------------------------------------------------------------
+%% @private
 %% @doc Return a list of all push registration records.
 %% @deprecated For debug only.
--spec all_reg(db_ctx()) -> ?SPRDB:push_reg_list().
+%% @end
+%%--------------------------------------------------------------------
+-spec all_reg(Ctx) -> PushRegs when
+    Ctx :: ctx(), PushRegs :: push_reg_list().
 all_reg(#?CTX{conn=Conn}) ->
     db_all_regs(Conn).
 
 %%--------------------------------------------------------------------
 %% @doc Check registration id key.
--spec check_id(#?CTX{}, ?SPRDB:reg_id_key()) -> ?SPRDB:reg_id_key().
+%% Returns `ID' if it is valid.
+%% @throws {bad_reg_id, reg_id_key()}
+%% @end
+%%--------------------------------------------------------------------
+-spec check_id(Ctx, ID) -> ID when
+      Ctx :: ctx(), ID :: reg_id_key().
 check_id(_Ctx, ID) ->
     case ID of
         {<<_, _/binary>>, <<_, _/binary>>} ->
@@ -137,19 +201,30 @@ check_id(_Ctx, ID) ->
     end.
 
 %%--------------------------------------------------------------------
-%% @doc Check multiple registration id keys.
--spec check_ids(db_ctx(), ?SPRDB:reg_id_keys()) -> ?SPRDB:reg_id_keys().
+%% @doc
+%% Check multiple registration id keys.
+%% @end
+%%--------------------------------------------------------------------
+-spec check_ids(Ctx, IDs) -> IDs when
+      Ctx :: ctx(), IDs :: reg_id_keys().
 check_ids(Ctx, IDs) when is_list(IDs) ->
     [check_id(Ctx, ID) || ID <- IDs].
 
 %%--------------------------------------------------------------------
-create_tables(#?CTX{}, _Config) ->
+%% @doc Create tables (a no-op for Postgres).
+%% @end
+%%--------------------------------------------------------------------
+-spec create_tables(Ctx, Config) -> any() when
+      Ctx :: ctx(), Config :: any().
+create_tables(_Ctx, _Config) ->
     ok.
 
 %%--------------------------------------------------------------------
-%% @doc Delete push registrations by device ids
--spec delete_push_regs_by_device_ids(db_ctx(), [binary()]) ->
-    ok | {error, term()}.
+%% @doc Delete push registrations by device ids.
+%% @end
+%%--------------------------------------------------------------------
+-spec delete_push_regs_by_device_ids(Ctx, DeviceIds) -> Result when
+      Ctx :: ctx(), DeviceIds :: [binary()], Result :: ok | {error, term()}.
 delete_push_regs_by_device_ids(#?CTX{conn=Conn},
                                DeviceIDs) when is_list(DeviceIDs) ->
     % In our pg db, device_ids are last_xscdevid.
@@ -158,7 +233,11 @@ delete_push_regs_by_device_ids(#?CTX{conn=Conn},
 
 %%--------------------------------------------------------------------
 %% @doc Delete push registrations by internal registration id.
--spec delete_push_regs_by_ids(db_ctx(), ?SPRDB:reg_id_keys()) -> ok | {error, term()}.
+%% @end
+%%--------------------------------------------------------------------
+-spec delete_push_regs_by_ids(Ctx, IDs) -> Result when
+      Ctx :: ctx(), IDs :: reg_id_keys(),
+      Result :: ok | {error, term()}.
 delete_push_regs_by_ids(#?CTX{conn=Conn, prep_qs=QMap}, IDs) ->
     Stmt = maps:get(<<"del_reg_by_id">>, QMap),
     Batch = [{Stmt, [DeviceID, Tag]} || {DeviceID, Tag} <- IDs],
@@ -166,8 +245,11 @@ delete_push_regs_by_ids(#?CTX{conn=Conn, prep_qs=QMap}, IDs) ->
 
 %%--------------------------------------------------------------------
 %% @doc Delete push registrations by service-token.
--spec delete_push_regs_by_svc_toks(db_ctx(), [?SPRDB:svc_tok_key()]) ->
-    ok | {error, term()}.
+%% @end
+%%--------------------------------------------------------------------
+-spec delete_push_regs_by_svc_toks(Ctx, SvcToks) -> Result when
+      Ctx :: ctx(), SvcToks :: [svc_tok_key()],
+      Result :: ok | {error, term()}.
 delete_push_regs_by_svc_toks(#?CTX{conn=Conn,
                                    prep_qs=QMap},
                              SvcToks) when is_list(SvcToks) ->
@@ -177,7 +259,10 @@ delete_push_regs_by_svc_toks(#?CTX{conn=Conn,
 
 %%--------------------------------------------------------------------
 %% @doc Delete push registrations by tags.
--spec delete_push_regs_by_tags(db_ctx(), [binary()]) -> ok | {error, term()}.
+%% @end
+%%--------------------------------------------------------------------
+-spec delete_push_regs_by_tags(Ctx, Tags) -> Result when
+      Ctx :: ctx(), Tags :: [binary()], Result :: ok | {error, term()}.
 delete_push_regs_by_tags(#?CTX{conn=Conn,
                                prep_qs=QMap}, Tags) when is_list(Tags) ->
     Stmt = maps:get(<<"del_reg_by_tag">>, QMap),
@@ -185,10 +270,13 @@ delete_push_regs_by_tags(#?CTX{conn=Conn,
     do_batch(Conn, Batch).
 
 %%--------------------------------------------------------------------
-%% @doc Update push registration last_invalid timestmap by service-token.
--spec update_invalid_timestamps_by_svc_toks(db_ctx(), [{?SPRDB:svc_tok_key(),
-                                                        non_neg_integer()}]) ->
-    ok | {error, term()}.
+%% @doc Update one or more push registration's last invalid timestamp, given a
+%% list of `{{Service, Token}, Timestamp}'.
+%% @end
+%%--------------------------------------------------------------------
+-spec update_invalid_timestamps_by_svc_toks(Ctx, SvcToksTs) -> Result when
+      Ctx :: ctx(), SvcToksTs :: [svc_tok_timestamp()],
+      Result :: ok | {error, term()}.
 update_invalid_timestamps_by_svc_toks(#?CTX{conn=Conn,
                                             prep_qs=QMap},
                                       SvcToksTs) when is_list(SvcToksTs) ->
@@ -199,37 +287,53 @@ update_invalid_timestamps_by_svc_toks(#?CTX{conn=Conn,
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by device id.
--spec get_registration_info_by_device_id(db_ctx(), binary()) ->
-    list(sc_types:reg_proplist()) | notfound.
+%%
+%% Return a list of registration property lists. or `notfound'.
+%% @end
+%%--------------------------------------------------------------------
+-spec get_registration_info_by_device_id(Ctx, DeviceID) -> Result when
+      Ctx :: ctx(), DeviceID :: binary(), Result :: reg_proplists() | notfound.
 get_registration_info_by_device_id(#?CTX{conn=Conn}, DeviceID) ->
     get_registration_info_impl(Conn, DeviceID, fun lookup_reg_device_id/2).
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by unique id.
 %% @see sc_push_reg_db:make_id/2
--spec get_registration_info_by_id(db_ctx(), ?SPRDB:reg_id_key()) ->
-    list(sc_types:reg_proplist()) | notfound.
+%% @end
+%%--------------------------------------------------------------------
+-spec get_registration_info_by_id(Ctx, ID) -> Result when
+      Ctx :: ctx(), ID :: reg_id_key(), Result :: reg_proplists() | notfound.
 get_registration_info_by_id(#?CTX{conn=Conn}, ID) ->
     get_registration_info_impl(Conn, ID, fun lookup_reg_id/2).
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by service-token.
 %% @see sc_push_reg_api:make_svc_tok/2
--spec get_registration_info_by_svc_tok(db_ctx(), ?SPRDB:svc_tok_key()) ->
-    list(sc_types:reg_proplist()) | notfound.
-get_registration_info_by_svc_tok(#?CTX{conn=Conn}, {_Service, _Token} = SvcTok) ->
+%% @end
+%%--------------------------------------------------------------------
+-spec get_registration_info_by_svc_tok(Ctx, SvcTok) -> Result when
+      Ctx :: ctx(), SvcTok :: svc_tok_key(),
+      Result :: reg_proplists() | notfound.
+get_registration_info_by_svc_tok(#?CTX{conn=Conn},
+                                 {_Service, _Token} = SvcTok) ->
     get_registration_info_impl(Conn, SvcTok, fun lookup_svc_tok/2).
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by tag.
--spec get_registration_info_by_tag(db_ctx(), binary()) ->
-    list(sc_types:reg_proplist()) | notfound.
+%% @end
+%%--------------------------------------------------------------------
+-spec get_registration_info_by_tag(Ctx, Tag) -> Result when
+      Ctx :: ctx(), Tag :: binary(),
+      Result :: reg_proplists() | notfound.
 get_registration_info_by_tag(#?CTX{conn=Conn}, Tag) ->
     get_registration_info_impl(Conn, Tag, fun lookup_reg_tag/2).
 
 %%--------------------------------------------------------------------
-%% @doc Is push registration proplist valid?
--spec is_valid_push_reg(db_ctx(), sc_types:proplist(atom(), term())) -> boolean().
+%% @doc Return `true' if push registration proplist is valid.
+%% @end
+%%--------------------------------------------------------------------
+-spec is_valid_push_reg(Ctx, PL) -> boolean() when
+      Ctx :: ctx(), PL :: reg_proplist().
 is_valid_push_reg(#?CTX{}, PL) ->
     try make_upsert_params(PL) of
         _ -> true
@@ -238,15 +342,23 @@ is_valid_push_reg(#?CTX{}, PL) ->
 
 %%--------------------------------------------------------------------
 %% @doc Save a list of push registrations.
--spec save_push_regs(db_ctx(), [sc_types:reg_proplist(), ...]) -> ok | {error, term()}.
-save_push_regs(#?CTX{conn=Conn, prep_qs=QMap}, ListOfProplists) ->
+%% @end
+%%--------------------------------------------------------------------
+-spec save_push_regs(Ctx, NonemptyRegProplists) -> Result when
+      Ctx :: ctx(), NonemptyRegProplists :: nonempty_reg_proplists(),
+      Result :: ok | {error, term()}.
+save_push_regs(#?CTX{conn=Conn, prep_qs=QMap}, [_|_]=NonemptyRegProplists) ->
     Stmt = maps:get(<<"call_upsert_func">>, QMap),
-    Batch = [{Stmt, make_upsert_params(PL)} || PL <- ListOfProplists],
+    Batch = [{Stmt, make_upsert_params(PL)} || PL <- NonemptyRegProplists],
     do_batch(Conn, Batch).
 
 %%--------------------------------------------------------------------
-%% @doc Re-register invalidated tokens
--spec reregister_ids(db_ctx(), [{?SPRDB:reg_id_key(), binary()}]) -> ok.
+%% @doc Re-register invalidated tokens.
+%% @end
+%%--------------------------------------------------------------------
+-spec reregister_ids(Ctx, IDToks) -> ok when
+      Ctx :: ctx(), IDToks :: [{RegID, NewToken}],
+      RegID :: reg_id_key(), NewToken :: binary().
 reregister_ids(#?CTX{conn=Conn, prep_qs=QMap}, IDToks) when is_list(IDToks) ->
     Stmt = maps:get(<<"reregister_id">>, QMap),
     Batch = [{Stmt, [NewTok, DevId, Tag]}
@@ -254,8 +366,12 @@ reregister_ids(#?CTX{conn=Conn, prep_qs=QMap}, IDToks) when is_list(IDToks) ->
     do_batch(Conn, Batch).
 
 %%--------------------------------------------------------------------
-%% @doc Re-register invalidated tokens by svc_tok
--spec reregister_svc_toks(db_ctx(), [{?SPRDB:svc_tok_key(), binary()}]) -> ok.
+%% @doc Re-register invalidated tokens by service and token.
+%% @end
+%%--------------------------------------------------------------------
+-spec reregister_svc_toks(Ctx, SvcToks) -> ok when
+      Ctx :: ctx(), SvcToks :: [{SvcTok, NewToken}],
+      SvcTok :: svc_tok_key(), NewToken :: binary().
 reregister_svc_toks(#?CTX{conn=Conn,
                           prep_qs=QMap}, SvcToks) when is_list(SvcToks) ->
     Stmt = maps:get(<<"reregister_svc_tok">>, QMap),
@@ -304,55 +420,33 @@ make_upsert_params([_|_]=PL) ->
     [UUID, Type, Token, AppId, XscDevId].
 
 %%--------------------------------------------------------------------
--ifdef(USE_upsert_row_txn).
-upsert_row_txn(Conn, RegProps) ->
-    Tag = sc_util:req_val(tag, RegProps),
-    Service = sc_util:req_val(service, RegProps),
-    Type = svc_to_type(Service),
-    Token = sc_util:req_val(token, RegProps),
-    AppId = sc_util:req_val(app_id, RegProps),
-    DeviceId = sc_util:req_val(device_id, RegProps),
-
-    fun(C) ->
-            {ok, _, Rows} = epq(C, <<"lookup_one_reg">>,
-                                [Tag, Type, Token, AppId]),
-
-            {Q, Args} = case Rows of
-                              [] -> % insert
-                                  {<<"insert_reg">>, [Tag, Type, Token,
-                                                      AppId, DeviceId]};
-                              [{RowId}] when is_integer(RowId) ->
-                                  {<<"update_reg">>, [Tag, Type, Token,
-                                                      AppId, DeviceId,
-                                                      RowId]
-                          end,
-            epq(C, Q, Args)
-    end.
--endif.
-
-%%--------------------------------------------------------------------
+%% @private
 %% For debugging only - if called on large db, unhappy days ahead.
--spec db_all_regs(term()) -> ?SPRDB:push_reg_list().
+-spec db_all_regs(term()) -> push_reg_list().
 db_all_regs(Conn) ->
     do_reg_pquery(Conn, <<"all_regs">>, []).
 
 %%--------------------------------------------------------------------
--spec lookup_reg_id(conn(), ?SPRDB:reg_id_key()) -> ?SPRDB:push_reg_list().
+%% @private
+-spec lookup_reg_id(conn(), reg_id_key()) -> push_reg_list().
 lookup_reg_id(Conn, {DevID, Tag}) ->
     do_reg_pquery(Conn, <<"lookup_reg_id">>, [DevID, Tag]).
 
 %%--------------------------------------------------------------------
--spec lookup_reg_device_id(conn(), binary()) -> ?SPRDB:push_reg_list().
+%% @private
+-spec lookup_reg_device_id(conn(), binary()) -> push_reg_list().
 lookup_reg_device_id(Conn, DevID) when is_binary(DevID) ->
     do_reg_pquery(Conn, <<"lookup_reg_device_id">>, [DevID]).
 
 %%--------------------------------------------------------------------
--spec lookup_reg_tag(conn(), binary()) -> ?SPRDB:push_reg_list().
+%% @private
+-spec lookup_reg_tag(conn(), binary()) -> push_reg_list().
 lookup_reg_tag(Conn, Tag) when is_binary(Tag) ->
     do_reg_pquery(Conn, <<"lookup_reg_tag">>, [Tag]).
 
 %%--------------------------------------------------------------------
--spec lookup_svc_tok(conn(), ?SPRDB:svc_tok_key()) -> ?SPRDB:push_reg_list().
+%% @private
+-spec lookup_svc_tok(conn(), svc_tok_key()) -> push_reg_list().
 lookup_svc_tok(Conn, {Svc, Tok}) when is_atom(Svc), is_binary(Tok) ->
     do_reg_pquery(Conn, <<"lookup_reg_svc_tok">>, [svc_to_type(Svc), Tok]).
 
@@ -597,19 +691,33 @@ pgtype2api(_,           Val) -> Val.
 %% Get time since the epoch in seconds, and derive microseconds from the
 %% seconds value if it is a floating point value.
 datetime_to_now({{_,_,_}=Date, {H,M,FracSecs}}) ->
-    S = erlang:trunc(FracSecs),
-    Micros = erlang:trunc((FracSecs - S) * 1000000),
-    POSIXSecs = calendar:datetime_to_gregorian_seconds({Date,{H,M,S}}) -
-                calendar:datetime_to_gregorian_seconds({{1970,1,1},{0,0,0}}),
+    {Secs, Micros} = float_secs_to_int(FracSecs),
+    POSIXSecs = datetime_to_posix_secs({Date,{H,M,Secs}}),
     {POSIXSecs div 1000000, POSIXSecs rem 1000000, Micros}.
 
 %%--------------------------------------------------------------------
+-spec posix_ms_to_pg_datetime(PosixMs) -> PgDateTime when
+      PosixMs :: non_neg_integer(), PgDateTime :: {H, M, FloatSecs},
+      H :: hour(), M :: minute(), FloatSecs :: float_sec().
 posix_ms_to_pg_datetime(PosixMs) ->
-    PosixSecs = PosixMs div 1000,
-    Micros = PosixMs rem 1000 * 1000,
-    TS = {PosixSecs div 1000000, PosixSecs rem 1000000, Micros},
+    {_,_,Micros} = TS = sc_push_reg_db:from_posix_time_ms(PosixMs),
     {Date, {H,M,S}} = calendar:now_to_universal_time(TS),
-    {Date, {H, M, S + (Micros / 1000000.0)}}.
+    {Date, {H, M, (S * 1000000 + Micros) / 1000000.0}}.
+
+%%--------------------------------------------------------------------
+-compile({inline, [{datetime_to_posix_secs, 1}]}).
+datetime_to_posix_secs({{_,_,_},{_,_,_}}=DT) ->
+    calendar:datetime_to_gregorian_seconds(DT) - ?EPOCH_GREGORIAN_SECONDS.
+
+%%--------------------------------------------------------------------
+-compile({inline, [{float_secs_to_int, 1}]}).
+-spec float_secs_to_int(Secs) -> {IntSecs, IntMicros} when
+      Secs :: float() | non_neg_integer(),
+      IntSecs :: non_neg_integer(), IntMicros :: non_neg_integer().
+float_secs_to_int(Secs) when is_float(Secs) ->
+    {erlang:trunc(Secs), erlang:round(Secs * 1000000.0) rem 1000000};
+float_secs_to_int(Secs) when is_integer(Secs) ->
+    {Secs, 0}.
 
 %%--------------------------------------------------------------------
 -spec prepared_queries(Conn, Queries) -> Result when
@@ -627,8 +735,8 @@ prepared_queries(Conn, Queries) ->
                                 {Stmts, [Err|Errs]}
                         end
                 end, {[], []}, Queries),
-    lager:info("Queries prepared successfully: ~B; failed: ~B",
-               [length(S), length(E)]),
+    lager:debug("Queries prepared successfully: ~B; failed: ~B",
+                [length(S), length(E)]),
     {S, E}.
 
 
