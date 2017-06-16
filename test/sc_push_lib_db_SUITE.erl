@@ -19,6 +19,7 @@ suite() -> [
         {require, registration},
         {require, databases},
         {require, connect_info},
+        {require, sasl},
         {require, lager}
     ].
 
@@ -30,14 +31,18 @@ init_per_suite(Config) ->
     ct:pal("Databases: ~p~n", [Databases]),
     ConnectInfo = ct:get_config(connect_info),
     ct:pal("connect_info config: ~p~n", [ConnectInfo]),
+    SaslConfig = ct:get_config(sasl),
+    ct:pal("Sasl Config: ~p~n", [SaslConfig]),
     RawLagerConfig = ct:get_config(lager),
     ct:pal("Raw lager config: ~p~n", [RawLagerConfig]),
     LagerConfig = sc_push_lib_test_helper:lager_config(Config,
                                                        RawLagerConfig),
     ct:pal("lager config: ~p~n", [LagerConfig]),
+
     [{registration, Registration},
      {databases, Databases},
      {connect_info, ConnectInfo},
+     {sasl, SaslConfig},
      {lager, LagerConfig} | Config].
 
 %%--------------------------------------------------------------------
@@ -61,7 +66,9 @@ end_per_group(_GroupName, _Config) ->
 init_per_testcase(_Case, Config) ->
     DBInfo = value(dbinfo, Config),
     LagerConfig = value(lager, Config),
+    SaslConfig = value(sasl, Config),
 
+    [ok = application:set_env(sasl, K, V) || {K, V} <- SaslConfig],
     ok = application:ensure_started(sasl),
     _ = application:load(lager),
     [ok = application:set_env(lager, K, V) || {K, V} <- LagerConfig],

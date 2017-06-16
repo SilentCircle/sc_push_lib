@@ -227,7 +227,10 @@
 %% @end
 %%--------------------------------------------------------------------
 -spec start_link(Args) -> Result when
-      Args :: term(), Result :: {ok, pid()} | ignore | {error, term()}.
+      Args :: proplists:proplist(),
+      Result :: {ok, Pid} | {error, {already_started, Pid}} | {error, Reason},
+      Pid :: pid(),
+      Reason :: term().
 start_link(Args) ->
     gen_server:start_link(?MODULE, Args, []).
 

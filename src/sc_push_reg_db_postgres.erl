@@ -74,10 +74,24 @@
               }).
 
 -type ctx() :: #sc_push_reg_db_postgres{}.
--type conn() :: epgsql:connection().
 -type stmt() :: #statement{}.
--type col()  :: epqsql:column().
+-type col()  :: #column{}.
+-type pg_error() :: #error{}.
+
+%% epgsql type aliases
+-type conn() :: epgsql:connection().
 -type bind_param() :: epgsql:bind_param().
+-type reply(T) :: epgsql:reply(T).
+-type equery_row() :: epgsql:equery_row().
+-type row() :: equery_row().
+
+-type query_name() :: string(). %% Why?? binary() actually does work, but...
+-type cols() :: [col()].
+-type rows() :: [row()].
+
+-type other_error() :: {error, term()}.
+-type scpf_error() :: {db_error, db, proplists:proplist()} |
+                      {db_error, other, other_error()}.
 -type reg_id_key() :: reg_id_key().
 -type reg_id_keys() :: sc_push_reg_db:reg_id_keys().
 -type push_reg_list() :: sc_push_reg_db:push_reg_list().
@@ -87,10 +101,6 @@
 -type reg_proplist() :: sc_types:reg_proplist().
 -type reg_proplists() :: [reg_proplist()].
 -type nonempty_reg_proplists() :: [reg_proplist(), ...].
-
--type hour() :: 0..23.
--type minute() :: 0..59.
--type float_sec() :: float().
 
 %%====================================================================
 %% API
@@ -158,9 +168,19 @@ db_info(Ctx) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec db_terminate(Ctx) -> Result when
-      Ctx :: ctx(), Result :: any().
+      Ctx :: ctx(), Result :: ok.
 db_terminate(#?CTX{conn=Conn}) ->
-    epgsql:close(Conn).
+    try epgsql:close(Conn) of
+        ok ->
+            ok;
+        NotOk ->
+            lager:warning("epgsql:close/1 -> ~p", [NotOk])
+    catch
+        Class:Reason ->
+            lager:warning("epgsql:close/1 threw ~p", [{Class, Reason}])
+    end,
+    ok.
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -228,7 +248,7 @@ create_tables(_Ctx, _Config) ->
 delete_push_regs_by_device_ids(#?CTX{conn=Conn},
                                DeviceIDs) when is_list(DeviceIDs) ->
     % In our pg db, device_ids are last_xscdevid.
-    {ok, _N} = pq(Conn, <<"del_regs_by_device_ids">>, [DeviceIDs]),
+    {ok, _N} = pq(Conn, "del_regs_by_device_ids", [DeviceIDs]),
     ok.
 
 %%--------------------------------------------------------------------
@@ -239,7 +259,7 @@ delete_push_regs_by_device_ids(#?CTX{conn=Conn},
       Ctx :: ctx(), IDs :: reg_id_keys(),
       Result :: ok | {error, term()}.
 delete_push_regs_by_ids(#?CTX{conn=Conn, prep_qs=QMap}, IDs) ->
-    Stmt = maps:get(<<"del_reg_by_id">>, QMap),
+    Stmt = maps:get("del_reg_by_id", QMap),
     Batch = [{Stmt, [DeviceID, Tag]} || {DeviceID, Tag} <- IDs],
     do_batch(Conn, Batch).
 
@@ -253,7 +273,7 @@ delete_push_regs_by_ids(#?CTX{conn=Conn, prep_qs=QMap}, IDs) ->
 delete_push_regs_by_svc_toks(#?CTX{conn=Conn,
                                    prep_qs=QMap},
                              SvcToks) when is_list(SvcToks) ->
-    Stmt = maps:get(<<"del_reg_by_svc_tok">>, QMap),
+    Stmt = maps:get("del_reg_by_svc_tok", QMap),
     Batch = [{Stmt, [svc_to_type(Svc), Tok]} || {Svc, Tok} <- SvcToks],
     do_batch(Conn, Batch).
 
@@ -265,7 +285,7 @@ delete_push_regs_by_svc_toks(#?CTX{conn=Conn,
       Ctx :: ctx(), Tags :: [binary()], Result :: ok | {error, term()}.
 delete_push_regs_by_tags(#?CTX{conn=Conn,
                                prep_qs=QMap}, Tags) when is_list(Tags) ->
-    Stmt = maps:get(<<"del_reg_by_tag">>, QMap),
+    Stmt = maps:get("del_reg_by_tag", QMap),
     Batch = [{Stmt, [Tag]} || Tag <- Tags],
     do_batch(Conn, Batch).
 
@@ -280,7 +300,7 @@ delete_push_regs_by_tags(#?CTX{conn=Conn,
 update_invalid_timestamps_by_svc_toks(#?CTX{conn=Conn,
                                             prep_qs=QMap},
                                       SvcToksTs) when is_list(SvcToksTs) ->
-    Stmt = maps:get(<<"update_invalid_ts_svc_tok">>, QMap),
+    Stmt = maps:get("update_invalid_ts_svc_tok", QMap),
     Batch = [{Stmt, [posix_ms_to_pg_datetime(TS), svc_to_type(Svc), Tok]}
              || {{Svc, Tok}, TS} <- SvcToksTs],
     do_batch(Conn, Batch).
@@ -348,7 +368,7 @@ is_valid_push_reg(#?CTX{}, PL) ->
       Ctx :: ctx(), NonemptyRegProplists :: nonempty_reg_proplists(),
       Result :: ok | {error, term()}.
 save_push_regs(#?CTX{conn=Conn, prep_qs=QMap}, [_|_]=NonemptyRegProplists) ->
-    Stmt = maps:get(<<"call_upsert_func">>, QMap),
+    Stmt = maps:get("call_upsert_func", QMap),
     Batch = [{Stmt, make_upsert_params(PL)} || PL <- NonemptyRegProplists],
     do_batch(Conn, Batch).
 
@@ -360,7 +380,7 @@ save_push_regs(#?CTX{conn=Conn, prep_qs=QMap}, [_|_]=NonemptyRegProplists) ->
       Ctx :: ctx(), IDToks :: [{RegID, NewToken}],
       RegID :: reg_id_key(), NewToken :: binary().
 reregister_ids(#?CTX{conn=Conn, prep_qs=QMap}, IDToks) when is_list(IDToks) ->
-    Stmt = maps:get(<<"reregister_id">>, QMap),
+    Stmt = maps:get("reregister_id", QMap),
     Batch = [{Stmt, [NewTok, DevId, Tag]}
              || {{DevId, Tag}, NewTok} <- IDToks],
     do_batch(Conn, Batch).
@@ -374,7 +394,7 @@ reregister_ids(#?CTX{conn=Conn, prep_qs=QMap}, IDToks) when is_list(IDToks) ->
       SvcTok :: svc_tok_key(), NewToken :: binary().
 reregister_svc_toks(#?CTX{conn=Conn,
                           prep_qs=QMap}, SvcToks) when is_list(SvcToks) ->
-    Stmt = maps:get(<<"reregister_svc_tok">>, QMap),
+    Stmt = maps:get("reregister_svc_tok", QMap),
     Batch = [{Stmt, [NewTok, svc_to_type(Svc), Tok]}
              || {{Svc, Tok}, NewTok} <- SvcToks],
     do_batch(Conn, Batch).
@@ -390,16 +410,19 @@ make_context(Conn, Config) ->
         {ok, #?CTX{conn=Conn, config=Config, prep_qs=PrepQs}}
     catch
         _:Error ->
-            (catch epqsql:close(Conn)),
+            (catch epgsql:close(Conn)),
             Error
     end.
 
 %%--------------------------------------------------------------------
+-spec prepare_statements(Conn) -> Result when
+      Conn :: conn(), Result :: {ok, PrepQs} | {error, Reason},
+      PrepQs :: map(), Reason :: any().
 prepare_statements(Conn) ->
     PTQueries = push_tokens_queries(?DB_PUSH_TOKENS_TBL),
     case prepared_queries(Conn, PTQueries) of
         {PrepQs, []} ->
-            handle_error(pq(Conn, <<"create_upsert_func">>, [])),
+            handle_error(pq(Conn, "create_upsert_func", [])),
             {ok, maps:from_list([{S#statement.name, S} || S <- PrepQs])};
         {_, Errors} ->
             {error, Errors}
@@ -424,31 +447,31 @@ make_upsert_params([_|_]=PL) ->
 %% For debugging only - if called on large db, unhappy days ahead.
 -spec db_all_regs(term()) -> push_reg_list().
 db_all_regs(Conn) ->
-    do_reg_pquery(Conn, <<"all_regs">>, []).
+    do_reg_pquery(Conn, "all_regs", []).
 
 %%--------------------------------------------------------------------
 %% @private
 -spec lookup_reg_id(conn(), reg_id_key()) -> push_reg_list().
 lookup_reg_id(Conn, {DevID, Tag}) ->
-    do_reg_pquery(Conn, <<"lookup_reg_id">>, [DevID, Tag]).
+    do_reg_pquery(Conn, "lookup_reg_id", [DevID, Tag]).
 
 %%--------------------------------------------------------------------
 %% @private
 -spec lookup_reg_device_id(conn(), binary()) -> push_reg_list().
 lookup_reg_device_id(Conn, DevID) when is_binary(DevID) ->
-    do_reg_pquery(Conn, <<"lookup_reg_device_id">>, [DevID]).
+    do_reg_pquery(Conn, "lookup_reg_device_id", [DevID]).
 
 %%--------------------------------------------------------------------
 %% @private
 -spec lookup_reg_tag(conn(), binary()) -> push_reg_list().
 lookup_reg_tag(Conn, Tag) when is_binary(Tag) ->
-    do_reg_pquery(Conn, <<"lookup_reg_tag">>, [Tag]).
+    do_reg_pquery(Conn, "lookup_reg_tag", [Tag]).
 
 %%--------------------------------------------------------------------
 %% @private
 -spec lookup_svc_tok(conn(), svc_tok_key()) -> push_reg_list().
 lookup_svc_tok(Conn, {Svc, Tok}) when is_atom(Svc), is_binary(Tok) ->
-    do_reg_pquery(Conn, <<"lookup_reg_svc_tok">>, [svc_to_type(Svc), Tok]).
+    do_reg_pquery(Conn, "lookup_reg_svc_tok", [svc_to_type(Svc), Tok]).
 
 %%--------------------------------------------------------------------
 get_registration_info_impl(Conn, Key, Lookup) when is_function(Lookup, 2) ->
@@ -460,19 +483,24 @@ get_registration_info_impl(Conn, Key, Lookup) when is_function(Lookup, 2) ->
     end.
 
 %%--------------------------------------------------------------------
+-spec do_reg_pquery(Conn, QueryName, Args) -> Result when
+      Conn :: conn(), QueryName :: query_name(), Args :: [bind_param()],
+      Result :: [proplists:proplist()] | scpf_error().
 do_reg_pquery(Conn, QueryName, Args) ->
     case pq(Conn, QueryName, Args) of
-        {error, _}=Error ->
-            Error;
         {ok, Count} when is_integer(Count) ->
             [];
         {ok, Maps} when is_list(Maps) ->
             push_reg_maps_to_props(Maps);
         {ok, _Count, Maps} ->
-            push_reg_maps_to_props(Maps)
+            push_reg_maps_to_props(Maps);
+        {error, _}=Error ->
+            Error
     end.
 
 %%--------------------------------------------------------------------
+-spec push_reg_maps_to_props(Maps) -> ListOfProplists when
+      Maps :: [map()], ListOfProplists  :: [proplists:proplist()].
 push_reg_maps_to_props(Maps) ->
     [sc_push_reg_db:make_sc_push_props(get_service(M),
                                        get_token(M),
@@ -486,6 +514,15 @@ push_reg_maps_to_props(Maps) ->
                                        ) || M <- Maps].
 
 %%--------------------------------------------------------------------
+-spec pq(Conn, QueryName, Args) -> Reply when
+      Conn :: conn(), QueryName :: query_name(), Args :: [bind_param()],
+      Reply :: {ok, Count}
+             | {ok, Columns, Rows}
+             | {ok, QueryMaps}
+             | {error, Reason},
+      Count :: integer(),
+      Columns :: cols(), Rows :: rows(),
+      QueryMaps :: [map()], Reason :: scpf_error().
 pq(Conn, QueryName, Args) ->
     case epq(Conn, QueryName, Args) of
         {ok, Count} when is_integer(Count) ->
@@ -500,6 +537,9 @@ pq(Conn, QueryName, Args) ->
 
 %%--------------------------------------------------------------------
 -compile({inline, [{epq, 3}]}).
+-spec epq(C, Q, Args) -> Reply when
+      C :: conn(), Q :: string(), Args :: [bind_param()],
+      Reply :: reply(row()).
 epq(C, Q, Args) ->
     epgsql:prepared_query(C, Q, Args).
 
@@ -517,7 +557,7 @@ do_batch(Conn, Batch) ->
             {ok, [], []} = epgsql:squery(Conn, "COMMIT"),
             ok;
         {_, Errs} ->
-            epqsql:squery(Conn, "ROLLBACK"),
+            epgsql:squery(Conn, "ROLLBACK"),
             {error, Errs}
     end.
 
@@ -537,16 +577,33 @@ type_to_svc(Val)           -> sc_util:to_atom(Val). %% FIXME: Potential DoS
 
 %%--------------------------------------------------------------------
 -spec pg2scpf_maps(Columns, Rows) -> Result when
-      Columns :: [col()], Rows :: list(), Result :: [map()].
+      Columns :: cols(), Rows :: rows(), Result :: [map()].
 pg2scpf_maps(Columns, Rows) when is_list(Rows) ->
     NumberedCols = lists:zip(Columns, lists:seq(1, length(Columns))),
     [pg2scpf(NumberedCols, Row) || Row <- Rows].
 
 
 %%--------------------------------------------------------------------
+-spec pg2scpf_err(Error) -> ScpfError when
+      Error :: pg_error() | other_error(), ScpfError :: scpf_error().
+pg2scpf_err(#error{severity=S,
+                   code=C,
+                   codename=CN,
+                   message=Msg,
+                   extra=Extra}) ->
+    {db_error, db, [{message, Msg},
+                    {severity, S},
+                    {code, C},
+                    {codename, CN},
+                    {extra, Extra}]};
+pg2scpf_err(Other) ->
+    {db_error, other, Other}.
+
+
+%%--------------------------------------------------------------------
 -spec pg2scpf(NumberedCols, Row) -> Map when
-      NumberedCols :: [{Col, ColNo}], Row :: tuple(),
-      Col :: col(), ColNo :: pos_integer(), Row :: tuple(),
+      NumberedCols :: [{Col, ColNo}], Row :: row(),
+      Col :: col(), ColNo :: pos_integer(),
       Map :: map().
 pg2scpf(NumberedCols, Row) when is_list(NumberedCols), is_tuple(Row) ->
     maps:from_list(lists:foldl(fun({#column{name=Name, type=T}, N}, Acc) ->
@@ -565,21 +622,6 @@ pg2api_xlate(service, <<Svc/binary>>) ->
     type_to_svc(Svc);
 pg2api_xlate(_Name, Val) ->
     Val.
-
-%%--------------------------------------------------------------------
-pg2scpf_err(#error{severity=S,
-                   code=C,
-                   codename=CN,
-                   message=Msg,
-                   extra=Extra}) ->
-    {db_error, db, [{message, Msg},
-                    {severity, S},
-                    {code, C},
-                    {codename, CN},
-                    {extra, Extra}]};
-pg2scpf_err(Other) ->
-    {db_error, other, Other}.
-
 
 %%--------------------------------------------------------------------
 get_tag(#{tag := V})                         -> V.
@@ -697,8 +739,7 @@ datetime_to_now({{_,_,_}=Date, {H,M,FracSecs}}) ->
 
 %%--------------------------------------------------------------------
 -spec posix_ms_to_pg_datetime(PosixMs) -> PgDateTime when
-      PosixMs :: non_neg_integer(), PgDateTime :: {H, M, FloatSecs},
-      H :: hour(), M :: minute(), FloatSecs :: float_sec().
+      PosixMs :: non_neg_integer(), PgDateTime :: epgsql:pg_datetime().
 posix_ms_to_pg_datetime(PosixMs) ->
     {_,_,Micros} = TS = sc_push_reg_db:from_posix_time_ms(PosixMs),
     {Date, {H,M,S}} = calendar:now_to_universal_time(TS),
@@ -722,7 +763,7 @@ float_secs_to_int(Secs) when is_integer(Secs) ->
 %%--------------------------------------------------------------------
 -spec prepared_queries(Conn, Queries) -> Result when
       Conn :: epgsql:connection(),
-      Queries :: [{StmtName, QueryIoList}], StmtName :: iolist(),
+      Queries :: [{StmtName, QueryIoList}], StmtName :: query_name(),
       QueryIoList :: iolist(),
       Result :: {Stmts, Errs}, Stmts :: [stmt()], Errs :: [{error, Reason}],
       Reason :: epgsql:query_error().
@@ -751,48 +792,48 @@ prepare(Conn, QueryName, Query) ->
 push_tokens_queries(Tab) ->
     Tbl = sc_util:to_bin(Tab),
     Cols = push_tokens_colnames_iolist(),
-    [{<<"lookup_one_reg">>,
+    [{"lookup_one_reg",
       [<<"select id from ">>, Tbl,
        <<" where uuid = $1 and type = $2 and token = $3 and appname = $4">>,
        <<" limit 1">>]},
-     {<<"all_regs">>, make_select_all_query(Tbl, Cols)},
-     {<<"lookup_reg_id">>,
+     {"all_regs", make_select_all_query(Tbl, Cols)},
+     {"lookup_reg_id",
       make_lookup_query(Tbl, Cols, <<"last_xscdevid = $1 and uuid = $2">>)},
-     {<<"lookup_reg_device_id">>,
+     {"lookup_reg_device_id",
       make_lookup_query(Tbl, Cols, <<"last_xscdevid = $1">>)},
-     {<<"lookup_reg_tag">>,
+     {"lookup_reg_tag",
       make_lookup_query(Tbl, Cols, <<"uuid = $1">>)},
-     {<<"lookup_reg_svc_tok">>,
+     {"lookup_reg_svc_tok",
       make_lookup_query(Tbl, Cols, <<"type = $1 and token = $2">>)},
-     {<<"del_regs_by_device_ids">>,
+     {"del_regs_by_device_ids",
       make_delete_query(Tbl, <<"last_xscdevid = any($1)">>)},
-     {<<"del_reg_by_id">>,
+     {"del_reg_by_id",
       make_delete_query(Tbl, <<"last_xscdevid = $1 and uuid = $2">>)},
-     {<<"del_reg_by_svc_tok">>,
+     {"del_reg_by_svc_tok",
       make_delete_query(Tbl, <<"type = $1 and token = $2">>)},
-     {<<"del_reg_by_tag">>, make_delete_query(Tbl, <<"uuid = $1">>)},
-     {<<"update_invalid_ts_svc_tok">>,
+     {"del_reg_by_tag", make_delete_query(Tbl, <<"uuid = $1">>)},
+     {"update_invalid_ts_svc_tok",
       [<<"update ">>, Tbl, <<" set last_invalid_on = $1">>,
        $\s, <<"where type = $2 and token = $3">>]},
-     {<<"reregister_id">>,
+     {"reregister_id",
       [<<"update ">>, Tbl, <<" set token = $1">>,
        <<" where last_xscdevid = $2 and uuid = $3">>]},
-     {<<"reregister_svc_tok">>,
+     {"reregister_svc_tok",
       [<<"update ">>, Tbl, <<" set token = $1">>,
        <<" where type = $2 and token = $3">>]},
-     {<<"insert_reg">>,
+     {"insert_reg",
       [<<"insert into ">>, Tbl,
        <<" (uuid, type, token, appname, last_xscdevid) ">>,
        <<" values ($1, $2, $3, $4, $5)">>]},
-     {<<"update_reg">>,
+     {"update_reg",
       [<<"update ">>, Tbl,
        <<" set uuid = $1, type = $2, token = $3,">>,
        <<" appname = $4, last_xscdevid = $5, last_seen_on = now() ">>,
        <<" where id = $6">>]},
-     {<<"delete_upsert_func">>, delete_upsert_func(schema_prefix())},
-     {<<"create_upsert_func">>,
+     {"delete_upsert_func", delete_upsert_func(schema_prefix())},
+     {"create_upsert_func",
       make_upsert_function_query(Tbl, schema_prefix())},
-     {<<"call_upsert_func">>, call_upsert_function(schema_prefix())}
+     {"call_upsert_func", call_upsert_function(schema_prefix())}
     ].
 
 %%--------------------------------------------------------------------
@@ -809,14 +850,21 @@ push_tokens_colnames() ->
     ].
 
 %%--------------------------------------------------------------------
+-spec push_tokens_colnames_iolist() -> iolist().
 push_tokens_colnames_iolist() ->
     bjoin(push_tokens_colnames(), <<",">>).
 
 %%--------------------------------------------------------------------
+-spec bjoin(ListOfBinaries, Sep) -> JoinedList when
+      ListOfBinaries :: [binary()], Sep :: binary(),
+      JoinedList :: [binary()].
 bjoin(ListOfBinaries, <<Sep/binary>>) ->
     bjoin(ListOfBinaries, Sep, []).
 
 %%--------------------------------------------------------------------
+-spec bjoin(ListOfBinaries, Sep, Acc) -> JoinedList when
+      ListOfBinaries :: [binary()], Sep :: binary(), Acc :: list(),
+      JoinedList :: [binary()].
 bjoin([<<B/binary>>], <<Sep/binary>>, Acc) ->
     bjoin([], Sep, [B | Acc]);
 bjoin([<<B/binary>> | Rest], <<Sep/binary>>, Acc) ->
@@ -825,20 +873,29 @@ bjoin([], <<_Sep/binary>>, Acc) ->
     lists:reverse(Acc).
 
 %%--------------------------------------------------------------------
+-spec make_select_all_query(Tbl, Cols) -> Query when
+      Tbl :: binary(), Cols :: [binary()], Query :: iolist().
 make_select_all_query(Tbl, Cols) ->
     [<<"select ">>, Cols, <<" from ">>, Tbl].
 
 %%--------------------------------------------------------------------
+-spec make_lookup_query(Tbl, Cols, WhereCondition) -> Query when
+      Tbl :: binary(), Cols :: [binary()],
+      WhereCondition :: binary(), Query :: iolist().
 make_lookup_query(Tbl, Cols, WhereCondition) ->
     [<<"select ">>, Cols, <<" from ">>, Tbl,
      <<" where ">>, WhereCondition].
 
 %%--------------------------------------------------------------------
+-spec make_delete_query(Tbl, WhereCondition) -> Query when
+      Tbl :: binary(), WhereCondition :: binary(), Query :: iolist().
 make_delete_query(Tbl, WhereCondition) ->
     [<<"delete from ">>, Tbl, <<" where ">>, WhereCondition].
 
 %%--------------------------------------------------------------------
-make_upsert_function_query(Tab, SchemaPrefix) ->
+-spec make_upsert_function_query(Tbl, SchemaPrefix) -> Query when
+      Tbl :: binary(), SchemaPrefix :: binary(), Query :: iolist().
+make_upsert_function_query(Tbl, SchemaPrefix) ->
     [<<"create or replace function ">>, SchemaPrefix, <<"push_tokens_upsert">>,
      <<"(uuid_ text, type_ text, token_ text, appname_ text, xscdevid_ text)
             returns integer as $$
@@ -850,22 +907,22 @@ make_upsert_function_query(Tab, SchemaPrefix) ->
                 a.last_xscdevid is null
                 or a.last_xscdevid <> xscdevid_ as needs_xscdevid
                 into r
-              from ">>, Tab, <<" a
+              from ">>, Tbl, <<" a
               where a.uuid = uuid_
                 and a.type = type_
                 and a.token = token_
                 and a.appname = appname_
               limit 1;
             if not found then
-              insert into ">>, Tab, <<" (uuid,type,token,appname,last_xscdevid)
+              insert into ">>, Tbl, <<" (uuid,type,token,appname,last_xscdevid)
                 values (uuid_,type_,token_,appname_,xscdevid_);
               return 1;
             else
               if r.needs_atime or r.needs_xscdevid then
-                update ">>, Tab, <<" set last_seen_on = now()
+                update ">>, Tbl, <<" set last_seen_on = now()
                   where id = r.id;
                 if r.needs_xscdevid then
-                  update ">>, Tab,
+                  update ">>, Tbl,
      <<" set last_xscdevid = xscdevid_
                     where id = r.id;
                   return 3;
@@ -878,15 +935,21 @@ make_upsert_function_query(Tab, SchemaPrefix) ->
           $$ language plpgsql volatile strict;">>].
 
 %%--------------------------------------------------------------------
+-spec delete_upsert_func(SchemaPrefix) -> Query when
+      SchemaPrefix :: binary(), Query :: iolist().
 delete_upsert_func(SchemaPrefix) ->
     [<<"drop function if exists ">>,
      SchemaPrefix, <<"push_tokens_upsert(text,text,text,text,text)">>].
 
 %%--------------------------------------------------------------------
+-spec call_upsert_function(SchemaPrefix) -> Query when
+      SchemaPrefix :: binary(), Query :: iolist().
 call_upsert_function(SchemaPrefix) ->
-    [<<"select ">>, SchemaPrefix, <<"push_tokens_upsert($1, $2, $3, $4, $5)">>].
+    [<<"select ">>, SchemaPrefix,
+     <<"push_tokens_upsert($1, $2, $3, $4, $5)">>].
 
 %%--------------------------------------------------------------------
+-spec schema_prefix() -> binary().
 schema_prefix() ->
     list_to_binary(?DB_SCHEMA_PREFIX).
 

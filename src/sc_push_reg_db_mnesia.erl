@@ -133,7 +133,7 @@ db_info(_Ctx) -> [].
 %% This is a no-op an the return value has no significance.
 %% @end
 %%--------------------------------------------------------------------
--spec db_terminate(ctx()) -> term().
+-spec db_terminate(ctx()) -> ok.
 db_terminate(_Ctx) ->
     ok.
 
