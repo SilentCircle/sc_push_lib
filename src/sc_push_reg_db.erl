@@ -223,182 +223,84 @@
 %%--------------------------------------------------------------------
 %% Behavior callbacks
 %%--------------------------------------------------------------------
-%%--------------------------------------------------------------------
-%% @doc Initialize the database connection.
-%%
-%% Return an opaque context for use with other API calls.
-%%
-%% <dl>
-%% <dt>`Context'</dt><dd>An opaque term returned to the caller, for use
-%% in other API calls. The context may be any term except for `undefined',
-%% which indicates an uninitialized context and is invalid in API calls.</dd>
-%% <dt>`Config :: proplists:proplist()'</dt>
-%% <dd>A property list containing configuration information. The format and
-%% content of the list is specific to the database backend. See the
-%% database-specific backend module for more information.
-%% </dl>
-%% @end
-%%--------------------------------------------------------------------
 -callback db_init(Config) -> {ok, Context} | {error, Reason} when
       Config :: proplists:proplist(), Context :: ctx(),
       Reason :: term().
 
 
-%%--------------------------------------------------------------------
-%% @doc Get information about the database context passed in `Ctx'.
-%%
-%% Return a property list, the contents of which depend on the
-%% database backend used.
-%% @end
-%%--------------------------------------------------------------------
 -callback db_info(Context) -> Result when
       Context :: ctx(),
       Result :: reg_db_result(proplists:proplist()).
 
-%%--------------------------------------------------------------------
-%% @doc Terminate the database connection.
-%% The return value has no significance.
-%% @end
-%%--------------------------------------------------------------------
 -callback db_terminate(Context) -> Result when
       Context :: ctx(), Result :: reg_db_result(ok).
 
 
-%%--------------------------------------------------------------------
-%% @doc Delete push registrations by device id keys.
-%% @end
-%%--------------------------------------------------------------------
 -callback delete_push_regs_by_device_ids(Context, DevIdKeys) -> Result when
       Context :: ctx(), DevIdKeys :: device_id_keys(),
       Result :: simple_result().
 
 
-%%--------------------------------------------------------------------
-%% @doc Delete push registrations by registration id keys.
-%% @end
-%%--------------------------------------------------------------------
 -callback delete_push_regs_by_ids(Context, RegIdKeys) -> Result when
       Context :: ctx(), RegIdKeys :: reg_id_keys(), Result :: simple_result().
 
 
-
-%%--------------------------------------------------------------------
-%% @doc Delete push registrations by service-token keys.
-%% @end
-%%--------------------------------------------------------------------
 -callback delete_push_regs_by_svc_toks(Context, SvcTokKeys) -> Result when
       Context :: ctx(), SvcTokKeys :: svc_tok_keys(),
       Result :: simple_result().
 
-
-%%--------------------------------------------------------------------
-%% @doc Update one or more push registration's last invalid timestamps, given a
-%% list of `{{Service, Token}, Timestamp}'.
-%% @end
-%%--------------------------------------------------------------------
 -callback update_invalid_timestamps_by_svc_toks(Context,
                                                 SvcTokTsList) -> Result when
       Context :: ctx(), SvcTokTsList :: mult_svc_tok_ts(),
       Result :: simple_result().
 
 
-%%--------------------------------------------------------------------
-%% @doc Delete push registrations by tag.
-%% @end
-%%--------------------------------------------------------------------
 -callback delete_push_regs_by_tags(Context, Tags) -> Result when
       Context :: ctx(), Tags :: tag_keys(), Result :: simple_result().
 
 
-%%--------------------------------------------------------------------
-%% @doc Get registration information by device id.
-%%
-%% Return a list of registration property lists, `notfound', or error.
-%% @end
-%%--------------------------------------------------------------------
 -callback get_registration_info_by_device_id(Context, DeviceId) -> Result when
       Context :: ctx(), DeviceId :: device_id_key(),
       Result :: db_props_lookup_result().
 
 
-%%--------------------------------------------------------------------
-%% @doc Get registration information by registration id.
-%%
-%% Return a list of registration property lists, `notfound', or error.
-%% @end
-%%--------------------------------------------------------------------
 -callback get_registration_info_by_id(Context, RegId) -> Result when
       Context :: ctx(), RegId :: reg_id_key(),
       Result :: db_props_lookup_result().
 
 
-%%--------------------------------------------------------------------
-%% @doc Get registration information by service+token.
-%%
-%% Return a list of registration property lists, `notfound', or error.
-%% @end
-%%--------------------------------------------------------------------
 -callback get_registration_info_by_svc_tok(Context, SvcTok) -> Result when
       Context :: ctx(), SvcTok :: svc_tok_key(),
       Result :: db_props_lookup_result().
 
 
-%%--------------------------------------------------------------------
-%% @doc Get registration information by tag.
-%%
-%% Return a list of registration property lists, `notfound', or error.
-%% @end
-%%--------------------------------------------------------------------
 -callback get_registration_info_by_tag(Context, Tag) -> Result when
       Context :: ctx(), Tag :: tag_key(),
       Result :: db_props_lookup_result().
 
 
-%%--------------------------------------------------------------------
-%% @doc Return `true' if push registration proplist is valid, `false'
-%% otherwise, or an error tuple for other consitions.
-%% @end
-%%--------------------------------------------------------------------
 -callback is_valid_push_reg(Context, PushReg) -> Result when
       Context :: ctx(), PushReg :: reg_db_props(),
       Result :: reg_db_result(boolean()).
 
 
-%%--------------------------------------------------------------------
-%% @doc Re-register multiple invalidated tokens, each matching a specific
-%% registration id key.
-%% @end
-%%--------------------------------------------------------------------
 -callback reregister_ids(Context, Ids) -> Result when
       Context :: ctx(), Ids :: rereg_ids(),
       Result :: reg_db_result(ok).
 
 
-%%--------------------------------------------------------------------
-%% @doc Re-register multiple invalidated tokens, each matching a specific
-%% service-token key.
-%% @end
-%%--------------------------------------------------------------------
 -callback reregister_svc_toks(Context, ReregSvcToks) -> Result when
       Context :: ctx(), ReregSvcToks :: rereg_svc_toks(),
       Result :: reg_db_result(ok).
 
 
-%%--------------------------------------------------------------------
-%% @doc Save a non-empty list of push registrations.
-%%
-%% This is effectively an upsert operation.
-%% @end
-%%--------------------------------------------------------------------
 -callback save_push_regs(Context, ListOfRegs) -> Result when
       Context :: ctx(), ListOfRegs :: [reg_db_props(), ...],
       Result :: simple_result().
 
-%% @deprecated
 -callback all_reg(Context) -> Result when
       Context :: ctx(), Result :: reg_db_result(list()).
 
-%% @deprecated
 -callback all_registration_info(Context) -> Result when
       Context :: ctx(), Result :: mult_reg_db_props().
 
@@ -557,7 +459,7 @@ reregister_svc_toks(Worker, SvcToks) ->
 
 %%--------------------------------------------------------------------
 %% @equiv make_sc_push_props(Service, Token, DeviceId, Tag, AppId,
-%%                           Dist, LastModifiedOn, undefined).
+%%                           Dist, LastModifiedOn, undefined)
 -spec make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
                          LastModifiedOn) -> Result
     when
@@ -574,7 +476,7 @@ make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
 %%--------------------------------------------------------------------
 %% @equiv make_sc_push_props(Service, Token, DeviceId, Tag, AppId,
 %%                           Dist, LastModifiedOn, LastInvalidOn,
-%%                           erlang:timestamp()).
+%%                           erlang:timestamp())
 -spec make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
                          LastModifiedOn, LastInvalidOn) -> Result
     when
