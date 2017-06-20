@@ -24,9 +24,6 @@
          db_terminate/1,
          all_reg/1,
          all_registration_info/1,
-         check_id/2,
-         check_ids/2,
-         create_tables/2,
          delete_push_regs_by_device_ids/2,
          delete_push_regs_by_ids/2,
          delete_push_regs_by_svc_toks/2,
@@ -69,13 +66,14 @@
 % an app/device/user combination anonymously.
 -record(sc_pshrg, {
         id = {<<>>, <<>>} :: sc_push_reg_db:reg_id_key(),
-        device_id = <<>> :: binary(),
-        tag = <<>> :: binary(), % User identification tag, e.g. <<"user@server">>
+        device_id = <<>> :: sc_push_reg_db:device_id(),
+        tag = <<>> :: sc_push_reg_db:tag(), % User identification tag, e.g. <<"user@server">>
         svc_tok = {undefined, <<>>} :: sc_push_reg_db:svc_tok_key(),
-        app_id = <<>> :: binary(), % iOS AppBundleID, Android package
-        dist = <<>> :: binary(), % distribution <<>> is same as <<"prod">>, or <<"dev">>
-        modified = {0, 0, 0} :: erlang:timestamp(),
-        last_invalid_on = undefined :: undefined | erlang:timestamp()
+        app_id = <<>> :: sc_push_reg_db:app_id(), % iOS AppBundleID, Android package
+        dist = <<>> :: sc_push_reg_db:dist(), % distribution <<>> is same as <<"prod">>, or <<"dev">>
+        modified = {0, 0, 0} :: sc_push_reg_db:mod_time(),
+        last_invalid_on = undefined :: sc_push_reg_db:inv_time(),
+        created_on = os:timestamp() :: sc_push_reg_db:created_on()
     }).
 
 -type push_reg_list() :: list(#sc_pshrg{}).
@@ -143,7 +141,7 @@ db_terminate(_Ctx) ->
 %% @doc Return a list of property lists of all push registration records.
 %% @end
 %%--------------------------------------------------------------------
--spec all_registration_info(ctx()) -> [sc_types:reg_proplist()].
+-spec all_registration_info(ctx()) -> sc_push_reg_db:mult_reg_db_props().
 all_registration_info(Ctx) ->
     [sc_pshrg_to_props(R) || R <- all_reg(Ctx)].
 
@@ -153,30 +151,11 @@ all_registration_info(Ctx) ->
 %% @doc Return a list of all push registration records.
 %% @end
 %%--------------------------------------------------------------------
--spec all_reg(ctx()) -> push_reg_list().
+-spec all_reg(ctx()) -> list().
 all_reg(_Ctx) ->
     do_txn(fun() ->
                 mnesia:select(sc_pshrg, ets:fun2ms(fun(R) -> R end))
         end).
-
-%%--------------------------------------------------------------------
-%% @doc Check registration id key.
--spec check_id(ctx(), sc_push_reg_db:reg_id_key()) ->
-    sc_push_reg_db:reg_id_key().
-check_id(_Ctx, ID) ->
-    case ID of
-        {<<_, _/binary>>, <<_, _/binary>>} ->
-           ID;
-       _ ->
-           throw({bad_reg_id, ID})
-    end.
-
-%%--------------------------------------------------------------------
-%% @doc Check multiple registration id keys.
--spec check_ids(ctx(), sc_push_reg_db:reg_id_keys()) ->
-    sc_push_reg_db:reg_id_keys().
-check_ids(Ctx, IDs) when is_list(IDs) ->
-    [check_id(Ctx, ID) || ID <- IDs].
 
 %%--------------------------------------------------------------------
 create_tables(_Ctx, Nodes) ->
@@ -222,7 +201,7 @@ delete_push_regs_by_tags(_Ctx, Tags) when is_list(Tags) ->
     do_txn(delete_push_regs_by_tag_txn(), [Tags]).
 
 %%--------------------------------------------------------------------
-%% @doc Update push registration last_invalid timestmap by service-token.
+%% @doc Update push registration last_invalid timestamp by service-token.
 -spec update_invalid_timestamps_by_svc_toks(ctx(),
                                             [{sc_push_reg_db:svc_tok_key(),
                                               non_neg_integer()}]) ->
@@ -234,7 +213,7 @@ update_invalid_timestamps_by_svc_toks(_Ctx, SvcToksTs)
 %%--------------------------------------------------------------------
 %% @doc Get registration information by device id.
 -spec get_registration_info_by_device_id(ctx(), binary()) ->
-    list(sc_types:reg_proplist()) | notfound.
+    sc_push_reg_db:mult_reg_db_props() | notfound.
 get_registration_info_by_device_id(_Ctx, DeviceID) ->
     get_registration_info_impl(DeviceID, fun lookup_reg_device_id/1).
 
@@ -242,7 +221,7 @@ get_registration_info_by_device_id(_Ctx, DeviceID) ->
 %% @doc Get registration information by unique id.
 %% @see sc_push_reg_api:make_id/2
 -spec get_registration_info_by_id(ctx(), sc_push_reg_db:reg_id_key()) ->
-    list(sc_types:reg_proplist()) | notfound.
+    sc_push_reg_db:mult_reg_db_props() | notfound.
 get_registration_info_by_id(_Ctx, ID) ->
     get_registration_info_impl(ID, fun lookup_reg_id/1).
 
@@ -250,14 +229,14 @@ get_registration_info_by_id(_Ctx, ID) ->
 %% @doc Get registration information by service-token.
 %% @see sc_push_reg_api:make_svc_tok/2
 -spec get_registration_info_by_svc_tok(ctx(), sc_push_reg_db:svc_tok_key()) ->
-    list(sc_types:reg_proplist()) | notfound.
+    sc_push_reg_db:mult_reg_db_props() | notfound.
 get_registration_info_by_svc_tok(_Ctx, {_Service, _Token} = SvcTok) ->
     get_registration_info_impl(SvcTok, fun lookup_svc_tok/1).
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by tag.
 -spec get_registration_info_by_tag(ctx(), binary()) ->
-    list(sc_types:reg_proplist()) | notfound.
+    sc_push_reg_db:mult_reg_db_props() | notfound.
 get_registration_info_by_tag(_Ctx, Tag) ->
     get_registration_info_impl(Tag, fun lookup_reg_tag/1).
 
@@ -272,7 +251,7 @@ is_valid_push_reg(_Ctx, PL) ->
 
 %%--------------------------------------------------------------------
 %% @doc Save a list of push registrations.
--spec save_push_regs(ctx(), [sc_types:reg_proplist(), ...]) ->
+-spec save_push_regs(ctx(), [sc_push_reg_db:reg_db_props(), ...]) ->
     ok | {error, term()}.
 save_push_regs(_Ctx, ListOfProplists) ->
     Regs = [make_sc_pshrg(PL) || PL <- ListOfProplists],
@@ -305,19 +284,36 @@ make_sc_pshrg([_|_] = Props)  ->
     make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist).
 
 %%--------------------------------------------------------------------
--spec make_sc_pshrg(sc_push_reg_db:atom_or_str(), sc_push_reg_db:binable(),
-                    sc_push_reg_db:binable(), sc_push_reg_db:binable(),
-                    sc_push_reg_db:binable(), sc_push_reg_db:binable()) ->
-    #sc_pshrg{}.
+-spec make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist) -> Result when
+      Service :: sc_push_reg_db:atom_or_str(),
+      Token :: sc_push_reg_db:binable(),
+      DeviceId :: sc_push_reg_db:binable(),
+      Tag :: sc_push_reg_db:binable(),
+      AppId :: sc_push_reg_db:binable(),
+      Dist :: sc_push_reg_db:binable(),
+      Result :: #sc_pshrg{}.
 make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist) ->
-    make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist, os:timestamp()).
+    Modified = os:timestamp(),
+    LastInvalidOn = undefined,
+    CreatedOn = Modified,
+    make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist, Modified,
+                 LastInvalidOn, CreatedOn).
 
 %%--------------------------------------------------------------------
--spec make_sc_pshrg(sc_push_reg_db:atom_or_str(), sc_push_reg_db:binable(),
-                    sc_push_reg_db:binable(), sc_push_reg_db:binable(),
-                    sc_push_reg_db:binable(), sc_push_reg_db:binable(),
-                    erlang:timestamp()) -> #sc_pshrg{}.
-make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist, Modified) ->
+-spec make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist, Modified,
+                    LastInvalidOn, CreatedOn) -> Result when
+      Service :: sc_push_reg_db:atom_or_str(),
+      Token :: sc_push_reg_db:binable(),
+      DeviceId :: sc_push_reg_db:binable(),
+      Tag :: sc_push_reg_db:binable(),
+      AppId :: sc_push_reg_db:binable(),
+      Dist :: sc_push_reg_db:binable(),
+      Modified :: erlang:timestamp(),
+      LastInvalidOn :: undefined | erlang:timestamp(),
+      CreatedOn :: erlang:timestamp(),
+      Result :: #sc_pshrg{}.
+make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist, Modified,
+              LastInvalidOn, CreatedOn) ->
     #sc_pshrg{
         id = sc_push_reg_api:make_id(DeviceId, Tag),
         device_id = DeviceId,
@@ -325,20 +321,23 @@ make_sc_pshrg(Service, Token, DeviceId, Tag, AppId, Dist, Modified) ->
         svc_tok = sc_push_reg_api:make_svc_tok(Service, Token),
         app_id = sc_util:to_bin(AppId),
         dist = sc_util:to_bin(Dist),
-        modified = Modified
+        created_on = CreatedOn,
+        modified = Modified,
+        last_invalid_on = LastInvalidOn
     }.
-
 %%--------------------------------------------------------------------
 sc_pshrg_to_props(#sc_pshrg{svc_tok = SvcToken,
                             tag = Tag,
                             device_id = DeviceID,
                             app_id = AppId,
                             dist = Dist,
+                            created_on = CreatedOn,
                             modified = Modified,
                             last_invalid_on = LastInvalidOn}) ->
     {Service, Token} = SvcToken,
     ?SPRDB:make_sc_push_props(Service, Token, DeviceID, Tag,
-                              AppId, Dist, Modified, LastInvalidOn).
+                              AppId, Dist, Modified, LastInvalidOn,
+                              CreatedOn).
 
 %%--------------------------------------------------------------------
 %% Database functions
@@ -359,25 +358,35 @@ upgrade_tables() ->
 
 %%--------------------------------------------------------------------
 upgrade_sc_pshrg() ->
-    case mnesia:table_info(sc_pshrg, attributes) of
-        [id,device_id,tag,svc_tok,app_id,dist,version,modified] ->
-            ok = mnesia:wait_for_tables([sc_pshrg], 30000),
-            Xform = fun({sc_pshrg, _Id, DeviceId, Tag, {Svc, Tok}, AppId, Dist,
-                         _Version, Modified}) ->
-                            make_sc_pshrg(Svc, Tok, DeviceId, Tag, AppId, Dist,
-                                          Modified)
-                    end,
+    Res = case mnesia:table_info(sc_pshrg, attributes) of
+              [id, device_id, tag, svc_tok, app_id, dist, modified,
+               last_invalid_on, created_on] ->
+                  ok; % Latest version
+              [id, device_id, tag, svc_tok, app_id, dist, version, modified] ->
+                  fun({sc_pshrg, _Id, DeviceId, Tag, {Svc, Tok}, AppId, Dist,
+                       _Version, Modified}) ->
+                          LastInvalidOn = undefined,
+                          CreatedOn = Modified,
+                          make_sc_pshrg(Svc, Tok, DeviceId, Tag, AppId, Dist,
+                                        Modified, LastInvalidOn, CreatedOn)
+                  end;
+              _ -> % Leave alone
+                  ok
+          end,
+    maybe_transform_tables(Res).
 
-            % Transform table (will transform all replicas of the table
-            % on other nodes, too, and if they are running the old code,
-            % the process will crash when the table is upgraded.
-            NewAttrs = record_info(fields, sc_pshrg),
-            ok = delete_all_table_indexes(sc_pshrg),
-            {atomic, ok} = mnesia:transform_table(sc_pshrg, Xform, NewAttrs),
-            _ = add_table_indexes(sc_pshrg, [device_id, tag, svc_tok]);
-        _ -> % Leave alone
-            ok
-    end.
+%%--------------------------------------------------------------------
+maybe_transform_tables(ok) ->
+    ok;
+maybe_transform_tables(Xform) when is_function(Xform, 1) ->
+    % Transform table (will transform all replicas of the table
+    % on other nodes, too, and if they are running the old code,
+    % the process will crash when the table is upgraded.
+    ok = mnesia:wait_for_tables([sc_pshrg], 30000),
+    NewAttrs = record_info(fields, sc_pshrg),
+    ok = delete_all_table_indexes(sc_pshrg),
+    {atomic, ok} = mnesia:transform_table(sc_pshrg, Xform, NewAttrs),
+    _ = add_table_indexes(sc_pshrg, [device_id, tag, svc_tok]).
 
 %%--------------------------------------------------------------------
 delete_all_table_indexes(Tab) ->

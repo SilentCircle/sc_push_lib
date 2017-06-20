@@ -24,40 +24,12 @@ ctx() = term()
 ## Function Index ##
 
 
-<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#check_id-2">check_id/2</a></td><td>Check registration id key.</td></tr><tr><td valign="top"><a href="#check_ids-2">check_ids/2</a></td><td>Check multiple registration id keys.</td></tr><tr><td valign="top"><a href="#create_tables-2">create_tables/2</a></td><td></td></tr><tr><td valign="top"><a href="#db_info-1">db_info/1</a></td><td>Get information about the database context passed in <code>Ctx</code>.</td></tr><tr><td valign="top"><a href="#db_init-1">db_init/1</a></td><td>Initialize the database connection.</td></tr><tr><td valign="top"><a href="#db_terminate-1">db_terminate/1</a></td><td>Terminate the database connection.</td></tr><tr><td valign="top"><a href="#delete_push_regs_by_device_ids-2">delete_push_regs_by_device_ids/2</a></td><td>Delete push registrations by device ids.</td></tr><tr><td valign="top"><a href="#delete_push_regs_by_ids-2">delete_push_regs_by_ids/2</a></td><td>Delete push registrations by internal registration id.</td></tr><tr><td valign="top"><a href="#delete_push_regs_by_svc_toks-2">delete_push_regs_by_svc_toks/2</a></td><td>Delete push registrations by service-token.</td></tr><tr><td valign="top"><a href="#delete_push_regs_by_tags-2">delete_push_regs_by_tags/2</a></td><td>Delete push registrations by tags.</td></tr><tr><td valign="top"><a href="#get_registration_info_by_device_id-2">get_registration_info_by_device_id/2</a></td><td>Get registration information by device id.</td></tr><tr><td valign="top"><a href="#get_registration_info_by_id-2">get_registration_info_by_id/2</a></td><td>Get registration information by unique id.</td></tr><tr><td valign="top"><a href="#get_registration_info_by_svc_tok-2">get_registration_info_by_svc_tok/2</a></td><td>Get registration information by service-token.</td></tr><tr><td valign="top"><a href="#get_registration_info_by_tag-2">get_registration_info_by_tag/2</a></td><td>Get registration information by tag.</td></tr><tr><td valign="top"><a href="#is_valid_push_reg-2">is_valid_push_reg/2</a></td><td>Is push registration proplist valid?.</td></tr><tr><td valign="top"><a href="#reregister_ids-2">reregister_ids/2</a></td><td>Re-register invalidated tokens.</td></tr><tr><td valign="top"><a href="#reregister_svc_toks-2">reregister_svc_toks/2</a></td><td>Re-register invalidated tokens by svc_tok.</td></tr><tr><td valign="top"><a href="#save_push_regs-2">save_push_regs/2</a></td><td>Save a list of push registrations.</td></tr><tr><td valign="top"><a href="#update_invalid_timestamps_by_svc_toks-2">update_invalid_timestamps_by_svc_toks/2</a></td><td>Update push registration last_invalid timestmap by service-token.</td></tr></table>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#db_info-1">db_info/1</a></td><td>Get information about the database context passed in <code>Ctx</code>.</td></tr><tr><td valign="top"><a href="#db_init-1">db_init/1</a></td><td>Initialize the database connection.</td></tr><tr><td valign="top"><a href="#db_terminate-1">db_terminate/1</a></td><td>Terminate the database connection.</td></tr><tr><td valign="top"><a href="#delete_push_regs_by_device_ids-2">delete_push_regs_by_device_ids/2</a></td><td>Delete push registrations by device ids.</td></tr><tr><td valign="top"><a href="#delete_push_regs_by_ids-2">delete_push_regs_by_ids/2</a></td><td>Delete push registrations by internal registration id.</td></tr><tr><td valign="top"><a href="#delete_push_regs_by_svc_toks-2">delete_push_regs_by_svc_toks/2</a></td><td>Delete push registrations by service-token.</td></tr><tr><td valign="top"><a href="#delete_push_regs_by_tags-2">delete_push_regs_by_tags/2</a></td><td>Delete push registrations by tags.</td></tr><tr><td valign="top"><a href="#get_registration_info_by_device_id-2">get_registration_info_by_device_id/2</a></td><td>Get registration information by device id.</td></tr><tr><td valign="top"><a href="#get_registration_info_by_id-2">get_registration_info_by_id/2</a></td><td>Get registration information by unique id.</td></tr><tr><td valign="top"><a href="#get_registration_info_by_svc_tok-2">get_registration_info_by_svc_tok/2</a></td><td>Get registration information by service-token.</td></tr><tr><td valign="top"><a href="#get_registration_info_by_tag-2">get_registration_info_by_tag/2</a></td><td>Get registration information by tag.</td></tr><tr><td valign="top"><a href="#is_valid_push_reg-2">is_valid_push_reg/2</a></td><td>Is push registration proplist valid?.</td></tr><tr><td valign="top"><a href="#reregister_ids-2">reregister_ids/2</a></td><td>Re-register invalidated tokens.</td></tr><tr><td valign="top"><a href="#reregister_svc_toks-2">reregister_svc_toks/2</a></td><td>Re-register invalidated tokens by svc_tok.</td></tr><tr><td valign="top"><a href="#save_push_regs-2">save_push_regs/2</a></td><td>Save a list of push registrations.</td></tr><tr><td valign="top"><a href="#update_invalid_timestamps_by_svc_toks-2">update_invalid_timestamps_by_svc_toks/2</a></td><td>Update push registration last_invalid timestamp by service-token.</td></tr></table>
 
 
 <a name="functions"></a>
 
 ## Function Details ##
-
-<a name="check_id-2"></a>
-
-### check_id/2 ###
-
-<pre><code>
-check_id(Ctx::<a href="#type-ctx">ctx()</a>, ID::<a href="sc_push_reg_db.md#type-reg_id_key">sc_push_reg_db:reg_id_key()</a>) -&gt; <a href="sc_push_reg_db.md#type-reg_id_key">sc_push_reg_db:reg_id_key()</a>
-</code></pre>
-<br />
-
-Check registration id key.
-
-<a name="check_ids-2"></a>
-
-### check_ids/2 ###
-
-<pre><code>
-check_ids(Ctx::<a href="#type-ctx">ctx()</a>, IDs::<a href="sc_push_reg_db.md#type-reg_id_keys">sc_push_reg_db:reg_id_keys()</a>) -&gt; <a href="sc_push_reg_db.md#type-reg_id_keys">sc_push_reg_db:reg_id_keys()</a>
-</code></pre>
-<br />
-
-Check multiple registration id keys.
-
-<a name="create_tables-2"></a>
-
-### create_tables/2 ###
-
-`create_tables(Ctx, Nodes) -> any()`
 
 <a name="db_info-1"></a>
 
@@ -172,7 +144,7 @@ Delete push registrations by tags.
 ### get_registration_info_by_device_id/2 ###
 
 <pre><code>
-get_registration_info_by_device_id(Ctx::<a href="#type-ctx">ctx()</a>, DeviceID::binary()) -&gt; [<a href="sc_types.md#type-reg_proplist">sc_types:reg_proplist()</a>] | notfound
+get_registration_info_by_device_id(Ctx::<a href="#type-ctx">ctx()</a>, DeviceID::binary()) -&gt; <a href="sc_push_reg_db.md#type-mult_reg_db_props">sc_push_reg_db:mult_reg_db_props()</a> | notfound
 </code></pre>
 <br />
 
@@ -183,7 +155,7 @@ Get registration information by device id.
 ### get_registration_info_by_id/2 ###
 
 <pre><code>
-get_registration_info_by_id(Ctx::<a href="#type-ctx">ctx()</a>, ID::<a href="sc_push_reg_db.md#type-reg_id_key">sc_push_reg_db:reg_id_key()</a>) -&gt; [<a href="sc_types.md#type-reg_proplist">sc_types:reg_proplist()</a>] | notfound
+get_registration_info_by_id(Ctx::<a href="#type-ctx">ctx()</a>, ID::<a href="sc_push_reg_db.md#type-reg_id_key">sc_push_reg_db:reg_id_key()</a>) -&gt; <a href="sc_push_reg_db.md#type-mult_reg_db_props">sc_push_reg_db:mult_reg_db_props()</a> | notfound
 </code></pre>
 <br />
 
@@ -196,7 +168,7 @@ __See also:__ [sc_push_reg_api:make_id/2](sc_push_reg_api.md#make_id-2).
 ### get_registration_info_by_svc_tok/2 ###
 
 <pre><code>
-get_registration_info_by_svc_tok(Ctx::<a href="#type-ctx">ctx()</a>, SvcTok::<a href="sc_push_reg_db.md#type-svc_tok_key">sc_push_reg_db:svc_tok_key()</a>) -&gt; [<a href="sc_types.md#type-reg_proplist">sc_types:reg_proplist()</a>] | notfound
+get_registration_info_by_svc_tok(Ctx::<a href="#type-ctx">ctx()</a>, SvcTok::<a href="sc_push_reg_db.md#type-svc_tok_key">sc_push_reg_db:svc_tok_key()</a>) -&gt; <a href="sc_push_reg_db.md#type-mult_reg_db_props">sc_push_reg_db:mult_reg_db_props()</a> | notfound
 </code></pre>
 <br />
 
@@ -209,7 +181,7 @@ __See also:__ [sc_push_reg_api:make_svc_tok/2](sc_push_reg_api.md#make_svc_tok-2
 ### get_registration_info_by_tag/2 ###
 
 <pre><code>
-get_registration_info_by_tag(Ctx::<a href="#type-ctx">ctx()</a>, Tag::binary()) -&gt; [<a href="sc_types.md#type-reg_proplist">sc_types:reg_proplist()</a>] | notfound
+get_registration_info_by_tag(Ctx::<a href="#type-ctx">ctx()</a>, Tag::binary()) -&gt; <a href="sc_push_reg_db.md#type-mult_reg_db_props">sc_push_reg_db:mult_reg_db_props()</a> | notfound
 </code></pre>
 <br />
 
@@ -253,7 +225,7 @@ Re-register invalidated tokens by svc_tok
 ### save_push_regs/2 ###
 
 <pre><code>
-save_push_regs(Ctx::<a href="#type-ctx">ctx()</a>, ListOfProplists::[<a href="sc_types.md#type-reg_proplist">sc_types:reg_proplist()</a>, ...]) -&gt; ok | {error, term()}
+save_push_regs(Ctx::<a href="#type-ctx">ctx()</a>, ListOfProplists::[<a href="sc_push_reg_db.md#type-reg_db_props">sc_push_reg_db:reg_db_props()</a>, ...]) -&gt; ok | {error, term()}
 </code></pre>
 <br />
 
@@ -268,5 +240,5 @@ update_invalid_timestamps_by_svc_toks(Ctx::<a href="#type-ctx">ctx()</a>, SvcTok
 </code></pre>
 <br />
 
-Update push registration last_invalid timestmap by service-token.
+Update push registration last_invalid timestamp by service-token.
 

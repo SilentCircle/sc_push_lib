@@ -34,9 +34,6 @@
 -export([
          all_reg/1,
          all_registration_info/1,
-         check_id/2,
-         check_ids/2,
-         create_tables/2,
          delete_push_regs_by_device_ids/2,
          delete_push_regs_by_ids/2,
          delete_push_regs_by_svc_toks/2,
@@ -74,8 +71,19 @@
          terminate/2,
          code_change/3]).
 
--define(DEFAULT_DB_MOD, sc_push_reg_db_mnesia).
+-define(SECS_TO_MS(Secs), (Secs * 1000)).
+-define(MINS_TO_SECS(Mins), (Mins * 60)).
+-define(MINS_TO_MS(Mins), ?SECS_TO_MS(?MINS_TO_SECS(Mins))).
 
+-define(DEFAULT_DB_MOD, sc_push_reg_db_mnesia).
+-define(INITIAL_DELAY, 500).
+-define(MAXIMUM_DELAY, ?MINS_TO_MS(5)).
+-define(TIMEOUT, ?SECS_TO_MS(5)).
+
+
+%%--------------------------------------------------------------------
+%% gen_server types
+%%--------------------------------------------------------------------
 -type terminate_reason() :: normal |
                             shutdown |
                             {shutdown, term()} |
@@ -91,131 +99,309 @@
                     | pid().
 
 %%--------------------------------------------------------------------
-%% Types
+%% Utility types
 %%--------------------------------------------------------------------
--type reg_id_key() :: {binary(), binary()}.
--type svc_tok_key() :: {atom(), binary()}.
 -type atom_or_str() :: atom() | string().
 -type atomable() :: atom() | string() | binary().
 -type binable() :: atom() | binary() | integer() | iolist().
--type reg_id_keys() :: [reg_id_key()].
--type push_reg_list() :: list().
--type reg_db_props() :: [{'app_id', binary()} |
-                         {'dist', binary()} |
-                         {'service', atom()} |
-                         {'device_id', binary()} |
-                         {'tag', binary()} |
-                         {'modified', tuple()} |
-                         {'last_invalid_on', undefined | tuple()} |
-                         {'token', binary()}].
+-type posix_timestamp_milliseconds() :: non_neg_integer().
 
+%%--------------------------------------------------------------------
+%% Registration DB types
+%%--------------------------------------------------------------------
+-type device_id() :: binary(). % A binary string denoting the installation and
+                               % application-specific device identifier. The
+                               % format and content of the string is opaque.
+
+-type tag() :: binary().       % A binary string denoting an identifier that
+                               % links together a number of device
+                               % registrations. This could be an email address,
+                               % a UUID, or something else. This value is
+                               % totally opaque to the registration service,
+                               % so if it is a string, it may be case-sensitive.
+                               %
+-type service() :: atom().     % The name of the push service. Currently, only
+                               % `apns' (Apple Push) and `gcm' (Google Cloud
+                               % Messaging) are known identifiers.
+
+-type token() :: binary().     % The push token (APNS) or registration id (GCM)
+                               % of the device + app being registered.
+                               % The format of this is a binary string of the
+                               % values provided by APNS or GCM, namely a lower
+                               % case hex string (AONS) and a very long text
+                               % string returned by GCM.
+
+-type app_id() :: binary().    % An application id, e.g. `<<"com.example.foo">>'.
+-type dist() :: binary().      % A distribution, `<<"prod">>' or `<<"dev">>'.
+
+-type created_on() :: erlang:timestamp().
+-type mod_time() :: erlang:timestamp().
+-type inv_time() :: undefined | erlang:timestamp().
+
+-type reg_db_props() :: [{'app_id', app_id()} |
+                         {'dist', dist()} |
+                         {'service', service()} |
+                         {'device_id', device_id()} |
+                         {'tag', tag()} |
+                         {'modified', mod_time()} |
+                         {'created_on', created_on()} |
+                         {'last_invalid_on', inv_time()} |
+                         {'token', token()}].
+
+-type mult_reg_db_props() :: [reg_db_props()].
+
+%%--------------------------------------------------------------------
+%% Keys used to retrieve push registrations from the database.
+%%--------------------------------------------------------------------
+-type device_id_key()   :: device_id().           % Device ID key.
+-type reg_id_key()      :: {device_id(), tag()}.  % Registration ID key.
+-type svc_tok_key()     :: {service(), token()}.  % Service/Token key.
+-type tag_key()         :: tag().
+
+-type device_id_keys()  :: [device_id()].         % List of device ID keys.
+-type reg_id_keys()     :: [reg_id_key()].        % A list of registration id keys.
+-type svc_tok_keys()    :: [svc_tok_key()].       % A list of service/Token keys.
+-type tag_keys()        :: [tag_keys()].
+
+-type last_invalid_ts() :: posix_timestamp_milliseconds().
+
+-type svc_tok_ts()      :: {svc_tok_key(), last_invalid_ts()}.
+-type mult_svc_tok_ts() :: [svc_tok_ts()].
+
+-type rereg_id()        :: {reg_id_key(), NewTok :: token()}.
+-type rereg_ids()       :: [rereg_id()].
+
+-type rereg_svc_tok()   :: {svc_tok_key(), NewTok :: token()}.
+-type rereg_svc_toks()  :: [rereg_svc_tok()].
+
+-type err_disconnected() :: {error, disconnected}.
+-type reg_db_result(Result) :: Result | err_disconnected().
+-type db_props_result() :: reg_db_result(reg_db_props()) .
+-type mult_db_props_result() :: reg_db_result(mult_reg_db_props()).
+-type simple_result() :: reg_db_result(ok | {error, term()}).
+-type db_props_lookup_result() :: reg_db_result(mult_reg_db_props() | notfound).
 
 -export_type([
-              reg_id_key/0,
-              svc_tok_key/0,
+              app_id/0,
               atom_or_str/0,
               atomable/0,
               binable/0,
-              reg_id_keys/0,
+              db_props_result/0,
+              db_props_lookup_result/0,
+              device_id/0,
+              dist/0,
+              err_disconnected/0,
+              inv_time/0,
+              mod_time/0,
+              created_on/0,
+              mult_db_props_result/0,
+              mult_reg_db_props/0,
+              mult_svc_tok_ts/0,
               reg_db_props/0,
-              push_reg_list/0
+              reg_db_result/1,
+              reg_id_key/0,
+              reg_id_keys/0,
+              service/0,
+              svc_tok_key/0,
+              tag/0,
+              token/0
              ]).
 
+-type ctx() :: undefined | term().
+
 -define(S, ?MODULE).
-
--type ctx() :: term().
-
 -record(?S, {db_mod :: atom(),
-             db_config,
-             db_ctx :: ctx()}).
+             db_config = [] :: proplists:proplist(),
+             db_ctx = undefined :: ctx(),
+             start_args :: proplists:proplist(),
+             delay = ?INITIAL_DELAY :: pos_integer(),
+             timer = undefined :: undefined | timer:tref()
+            }).
 
 -type state() :: #?S{}.
 
 %%--------------------------------------------------------------------
 %% Behavior callbacks
 %%--------------------------------------------------------------------
--callback db_init(Config) -> {ok, Context} | {error, Reason}
-    when Config :: term(), Context :: ctx(), Reason :: term().
+%%--------------------------------------------------------------------
+%% @doc Initialize the database connection.
+%%
+%% Return an opaque context for use with other API calls.
+%%
+%% <dl>
+%% <dt>`Context'</dt><dd>An opaque term returned to the caller, for use
+%% in other API calls. The context may be any term except for `undefined',
+%% which indicates an uninitialized context and is invalid in API calls.</dd>
+%% <dt>`Config :: proplists:proplist()'</dt>
+%% <dd>A property list containing configuration information. The format and
+%% content of the list is specific to the database backend. See the
+%% database-specific backend module for more information.
+%% </dl>
+%% @end
+%%--------------------------------------------------------------------
+-callback db_init(Config) -> {ok, Context} | {error, Reason} when
+      Config :: proplists:proplist(), Context :: ctx(),
+      Reason :: term().
 
 
--callback db_info(ctx()) -> Info
-    when Info :: proplists:proplist().
+%%--------------------------------------------------------------------
+%% @doc Get information about the database context passed in `Ctx'.
+%%
+%% Return a property list, the contents of which depend on the
+%% database backend used.
+%% @end
+%%--------------------------------------------------------------------
+-callback db_info(Context) -> Result when
+      Context :: ctx(),
+      Result :: reg_db_result(proplists:proplist()).
+
+%%--------------------------------------------------------------------
+%% @doc Terminate the database connection.
+%% The return value has no significance.
+%% @end
+%%--------------------------------------------------------------------
+-callback db_terminate(Context) -> Result when
+      Context :: ctx(), Result :: reg_db_result(ok).
 
 
--callback db_terminate(Context) -> ok when
-      Context :: ctx().
+%%--------------------------------------------------------------------
+%% @doc Delete push registrations by device id keys.
+%% @end
+%%--------------------------------------------------------------------
+-callback delete_push_regs_by_device_ids(Context, DevIdKeys) -> Result when
+      Context :: ctx(), DevIdKeys :: device_id_keys(),
+      Result :: simple_result().
 
 
--callback all_reg(term()) -> list().
+%%--------------------------------------------------------------------
+%% @doc Delete push registrations by registration id keys.
+%% @end
+%%--------------------------------------------------------------------
+-callback delete_push_regs_by_ids(Context, RegIdKeys) -> Result when
+      Context :: ctx(), RegIdKeys :: reg_id_keys(), Result :: simple_result().
 
 
--callback all_registration_info(ctx()) -> Result
-    when Result :: [sc_types:reg_proplist()].
+
+%%--------------------------------------------------------------------
+%% @doc Delete push registrations by service-token keys.
+%% @end
+%%--------------------------------------------------------------------
+-callback delete_push_regs_by_svc_toks(Context, SvcTokKeys) -> Result when
+      Context :: ctx(), SvcTokKeys :: svc_tok_keys(),
+      Result :: simple_result().
 
 
--callback check_id(ctx(), RegIdKey) -> Result
-    when RegIdKey :: reg_id_key(), Result :: reg_id_key().
+%%--------------------------------------------------------------------
+%% @doc Update one or more push registration's last invalid timestamps, given a
+%% list of `{{Service, Token}, Timestamp}'.
+%% @end
+%%--------------------------------------------------------------------
+-callback update_invalid_timestamps_by_svc_toks(Context,
+                                                SvcTokTsList) -> Result when
+      Context :: ctx(), SvcTokTsList :: mult_svc_tok_ts(),
+      Result :: simple_result().
 
 
--callback check_ids(ctx(), RegIdKeys) -> Result
-    when RegIdKeys :: reg_id_keys(), Result :: reg_id_keys().
+%%--------------------------------------------------------------------
+%% @doc Delete push registrations by tag.
+%% @end
+%%--------------------------------------------------------------------
+-callback delete_push_regs_by_tags(Context, Tags) -> Result when
+      Context :: ctx(), Tags :: tag_keys(), Result :: simple_result().
 
 
--callback create_tables(ctx(), Config) -> any()
-    when Config :: any().
+%%--------------------------------------------------------------------
+%% @doc Get registration information by device id.
+%%
+%% Return a list of registration property lists, `notfound', or error.
+%% @end
+%%--------------------------------------------------------------------
+-callback get_registration_info_by_device_id(Context, DeviceId) -> Result when
+      Context :: ctx(), DeviceId :: device_id_key(),
+      Result :: db_props_lookup_result().
 
 
--callback delete_push_regs_by_device_ids(ctx(), Key) -> Result
-    when Key :: term(), Result :: term().
+%%--------------------------------------------------------------------
+%% @doc Get registration information by registration id.
+%%
+%% Return a list of registration property lists, `notfound', or error.
+%% @end
+%%--------------------------------------------------------------------
+-callback get_registration_info_by_id(Context, RegId) -> Result when
+      Context :: ctx(), RegId :: reg_id_key(),
+      Result :: db_props_lookup_result().
 
 
--callback delete_push_regs_by_ids(ctx(), Key) -> Result
-    when Key :: term(), Result :: term().
+%%--------------------------------------------------------------------
+%% @doc Get registration information by service+token.
+%%
+%% Return a list of registration property lists, `notfound', or error.
+%% @end
+%%--------------------------------------------------------------------
+-callback get_registration_info_by_svc_tok(Context, SvcTok) -> Result when
+      Context :: ctx(), SvcTok :: svc_tok_key(),
+      Result :: db_props_lookup_result().
 
 
--callback delete_push_regs_by_svc_toks(ctx(), Key) -> Result
-    when Key :: term(), Result :: term().
+%%--------------------------------------------------------------------
+%% @doc Get registration information by tag.
+%%
+%% Return a list of registration property lists, `notfound', or error.
+%% @end
+%%--------------------------------------------------------------------
+-callback get_registration_info_by_tag(Context, Tag) -> Result when
+      Context :: ctx(), Tag :: tag_key(),
+      Result :: db_props_lookup_result().
 
 
--callback update_invalid_timestamps_by_svc_toks(ctx(), Key) -> Result
-    when Key :: term(), Result :: term().
+%%--------------------------------------------------------------------
+%% @doc Return `true' if push registration proplist is valid, `false'
+%% otherwise, or an error tuple for other consitions.
+%% @end
+%%--------------------------------------------------------------------
+-callback is_valid_push_reg(Context, PushReg) -> Result when
+      Context :: ctx(), PushReg :: reg_db_props(),
+      Result :: reg_db_result(boolean()).
 
 
--callback delete_push_regs_by_tags(ctx(), Key) -> Result
-    when Key :: term(), Result :: term().
+%%--------------------------------------------------------------------
+%% @doc Re-register multiple invalidated tokens, each matching a specific
+%% registration id key.
+%% @end
+%%--------------------------------------------------------------------
+-callback reregister_ids(Context, Ids) -> Result when
+      Context :: ctx(), Ids :: rereg_ids(),
+      Result :: reg_db_result(ok).
 
 
--callback get_registration_info_by_device_id(ctx(), Key) -> Result
-    when Key :: term(), Result :: term().
+%%--------------------------------------------------------------------
+%% @doc Re-register multiple invalidated tokens, each matching a specific
+%% service-token key.
+%% @end
+%%--------------------------------------------------------------------
+-callback reregister_svc_toks(Context, ReregSvcToks) -> Result when
+      Context :: ctx(), ReregSvcToks :: rereg_svc_toks(),
+      Result :: reg_db_result(ok).
 
 
--callback get_registration_info_by_id(ctx(), Key) -> Result
-    when Key :: term(), Result :: term().
+%%--------------------------------------------------------------------
+%% @doc Save a non-empty list of push registrations.
+%%
+%% This is effectively an upsert operation.
+%% @end
+%%--------------------------------------------------------------------
+-callback save_push_regs(Context, ListOfRegs) -> Result when
+      Context :: ctx(), ListOfRegs :: [reg_db_props(), ...],
+      Result :: simple_result().
 
+%% @deprecated
+-callback all_reg(Context) -> Result when
+      Context :: ctx(), Result :: reg_db_result(list()).
 
--callback get_registration_info_by_svc_tok(ctx(), Key) -> Result
-    when Key :: term(), Result :: term().
+%% @deprecated
+-callback all_registration_info(Context) -> Result when
+      Context :: ctx(), Result :: mult_reg_db_props().
 
-
--callback get_registration_info_by_tag(ctx(), Key) -> Result
-    when Key :: term(), Result :: term().
-
-
--callback is_valid_push_reg(ctx(), Key) -> Result
-    when Key :: term(), Result :: term().
-
-
--callback reregister_ids(ctx(), Ids) -> ok
-    when Ids :: [{reg_id_key(), binary()}].
-
-
--callback reregister_svc_toks(ctx(), SvcToks) -> ok
-    when SvcToks :: [{svc_tok_key(), binary()}].
-
-
--callback save_push_regs(ctx(), ListOfProplists) -> Result
-    when ListOfProplists :: [sc_types:reg_proplist(), ...],
-         Result :: ok | {error, term()}.
 
 %%====================================================================
 %% API
@@ -261,36 +447,22 @@ stop(ServerRef) ->
 %% @doc Return a list of property lists of all registrations.
 %% @end
 %%--------------------------------------------------------------------
--spec all_registration_info(pid()) -> [sc_types:reg_proplist()].
+-spec all_registration_info(pid()) -> mult_reg_db_props().
 all_registration_info(Worker) ->
     gen_server:call(Worker, all_registration_info).
 
 %%--------------------------------------------------------------------
 %% @private
 %% @deprecated For debug only.
-%% @doc Return a list of all push registration records.
+%% @doc Return a list of all push registration "records".
+%%
+%% The format of the record is backend-specific (e.g. map(), record,
+%% proplist, ...)
 %% @end
 %%--------------------------------------------------------------------
--spec all_reg(pid()) -> push_reg_list().
+-spec all_reg(pid()) -> list().
 all_reg(Worker) ->
     gen_server:call(Worker, all_reg).
-
-%%--------------------------------------------------------------------
-%% @doc Check registration id key.
--spec check_id(pid(), reg_id_key()) -> reg_id_key().
-check_id(Worker, ID) ->
-    gen_server:call(Worker, {check_id, ID}).
-
-%%--------------------------------------------------------------------
-%% @doc Check multiple registration id keys.
--spec check_ids(pid(), reg_id_keys()) -> reg_id_keys().
-check_ids(Worker, IDs) ->
-    gen_server:call(Worker, {check_ids, IDs}).
-
-%%--------------------------------------------------------------------
-%% @doc Create tables. May be a no-op for certain backends.
-create_tables(Worker, Config) ->
-    gen_server:call(Worker, {create_tables, Config}).
 
 %%--------------------------------------------------------------------
 %% @doc Delete push registrations by device ids
@@ -327,7 +499,7 @@ delete_push_regs_by_tags(Worker, Tags) ->
 %%--------------------------------------------------------------------
 %% @doc Get registration information by device id.
 -spec get_registration_info_by_device_id(pid(), binary()) ->
-    list(sc_types:reg_proplist()) | notfound.
+    mult_reg_db_props() | notfound.
 get_registration_info_by_device_id(Worker, DeviceID) ->
     gen_server:call(Worker, {get_registration_info_by_device_id, DeviceID}).
 
@@ -335,7 +507,7 @@ get_registration_info_by_device_id(Worker, DeviceID) ->
 %% @doc Get registration information by unique id.
 %% @see:sc_push_reg_api: make_id/2
 -spec get_registration_info_by_id(pid(), reg_id_key()) ->
-    list(sc_types:reg_proplist()) | notfound.
+    mult_reg_db_props() | notfound.
 get_registration_info_by_id(Worker, ID) ->
     gen_server:call(Worker, {get_registration_info_by_id, ID}).
 
@@ -343,27 +515,27 @@ get_registration_info_by_id(Worker, ID) ->
 %% @doc Get registration information by service-token.
 %% @see sc_push_reg_api:make_svc_tok/2
 -spec get_registration_info_by_svc_tok(pid(), svc_tok_key()) ->
-    list(sc_types:reg_proplist()) | notfound.
+    mult_reg_db_props() | notfound.
 get_registration_info_by_svc_tok(Worker, SvcTok) ->
     gen_server:call(Worker, {get_registration_info_by_svc_tok, SvcTok}).
 
 %%--------------------------------------------------------------------
 %% @doc Get registration information by tag.
 -spec get_registration_info_by_tag(pid(), binary()) ->
-    list(sc_types:reg_proplist()) | notfound.
+    mult_reg_db_props() | notfound.
 get_registration_info_by_tag(Worker, Tag) ->
     gen_server:call(Worker, {get_registration_info_by_tag, Tag}).
 
 %%--------------------------------------------------------------------
 %% @doc Is push registration proplist valid?
--spec is_valid_push_reg(pid(), sc_types:proplist(atom(), term())) -> boolean().
+-spec is_valid_push_reg(pid(), reg_db_props()) -> boolean().
 is_valid_push_reg(Worker, PL) ->
     gen_server:call(Worker, {is_valid_push_reg, PL}).
 
 %%--------------------------------------------------------------------
 %% @doc Save a list of push registrations.
 -spec save_push_regs(Worker, ListOfPropLists) -> ok | {error, term()} when
-      Worker :: pid(), ListOfPropLists :: [sc_types:reg_proplist(), ...].
+      Worker :: pid(), ListOfPropLists :: [reg_db_props(), ...].
 save_push_regs(Worker, ListOfProplists) ->
     gen_server:call(Worker, {save_push_regs, ListOfProplists}).
 
@@ -384,7 +556,8 @@ reregister_svc_toks(Worker, SvcToks) ->
 %%--------------------------------------------------------------------
 
 %%--------------------------------------------------------------------
-%% @doc Create a property list from push registration data.
+%% @equiv make_sc_push_props(Service, Token, DeviceId, Tag, AppId,
+%%                           Dist, LastModifiedOn, undefined).
 -spec make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
                          LastModifiedOn) -> Result
     when
@@ -399,7 +572,9 @@ make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
                        LastModifiedOn, LastInvalidOn).
 
 %%--------------------------------------------------------------------
-%% @doc Create a property list from push registration data.
+%% @equiv make_sc_push_props(Service, Token, DeviceId, Tag, AppId,
+%%                           Dist, LastModifiedOn, LastInvalidOn,
+%%                           erlang:timestamp()).
 -spec make_sc_push_props(Service, Token, DeviceId, Tag, AppId, Dist,
                          LastModifiedOn, LastInvalidOn) -> Result
     when
@@ -458,6 +633,12 @@ from_posix_time_ms(TimestampMs) ->
 %%--------------------------------------------------------------------
 
 %%--------------------------------------------------------------------
+%% Portions of the code below were adapted - with thanks - from
+%% https://github.com/epgsql/pgapp.git, specifically those related to
+%% handling connection failure.
+%%--------------------------------------------------------------------
+
+%%--------------------------------------------------------------------
 %% @private
 %% @doc
 %% Initializes the server
@@ -472,12 +653,7 @@ from_posix_time_ms(TimestampMs) ->
                       .
 init([_|_]=Args) ->
     erlang:process_flag(trap_exit, true),
-    DbMod = sc_util:req_val(db_mod, Args),
-    DbConfig = sc_util:req_val(db_config, Args),
-    {ok, DbCtx} = DbMod:db_init(DbConfig),
-    {ok, #?S{db_mod = DbMod,
-             db_config = DbConfig,
-             db_ctx = DbCtx}}.
+    {ok, connect(#?S{start_args=Args})}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -499,37 +675,11 @@ init([_|_]=Args) ->
     {stop, Reason::term(), NewState::state()}
     .
 
-handle_call(all_registration_info, _From,
-            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
-    Reply = Mod:all_registration_info(Ctx),
-    {reply, Reply, St};
-handle_call(all_reg, _From, #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
-    Reply = Mod:all_reg(Ctx),
-    {reply, Reply, St};
-handle_call({check_id, ID}, _From, #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
-    Reply = Mod:check_id(Ctx, ID),
-    {reply, Reply, St};
-handle_call({check_ids, IDs}, _From, #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
-    Reply = Mod:check_ids(Ctx, IDs),
-    {reply, Reply, St};
-handle_call({create_tables, Config}, _From, #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
-    Reply = Mod:create_tables(Ctx, Config),
-    {reply, Reply, St};
-handle_call({delete_push_regs_by_device_ids, DeviceIDs}, _From,
-            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
-    Reply = Mod:delete_push_regs_by_device_ids(Ctx, DeviceIDs),
-    {reply, Reply, St};
-handle_call({delete_push_regs_by_ids, IDs}, _From,
-            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
-    Reply = Mod:delete_push_regs_by_ids(Ctx, IDs),
-    {reply, Reply, St};
-handle_call({delete_push_regs_by_svc_toks, SvcToks}, _From,
-            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
-    Reply = Mod:delete_push_regs_by_svc_toks(Ctx, SvcToks),
-    {reply, Reply, St};
-handle_call({delete_push_regs_by_tags, Tags}, _From,
-            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
-    Reply = Mod:delete_push_regs_by_tags(Ctx, Tags),
+handle_call(_Req, _From, #?S{db_ctx=undefined}=St)->
+    {reply, {error, disconnected}, St};
+handle_call({save_push_regs, ListOfProplists}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St)->
+    Reply = Mod:save_push_regs(Ctx, ListOfProplists),
     {reply, Reply, St};
 handle_call({update_invalid_timestamps_by_svc_toks, SvcToksTs},
             _From, #?S{db_mod=Mod, db_ctx=Ctx}=St)->
@@ -551,9 +701,21 @@ handle_call({get_registration_info_by_tag, Tag}, _From,
             #?S{db_mod=Mod, db_ctx=Ctx}=St)->
     Reply = Mod:get_registration_info_by_tag(Ctx, Tag),
     {reply, Reply, St};
-handle_call({save_push_regs, ListOfProplists}, _From,
-            #?S{db_mod=Mod, db_ctx=Ctx}=St)->
-    Reply = Mod:save_push_regs(Ctx, ListOfProplists),
+handle_call({delete_push_regs_by_device_ids, DeviceIDs}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:delete_push_regs_by_device_ids(Ctx, DeviceIDs),
+    {reply, Reply, St};
+handle_call({delete_push_regs_by_ids, IDs}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:delete_push_regs_by_ids(Ctx, IDs),
+    {reply, Reply, St};
+handle_call({delete_push_regs_by_svc_toks, SvcToks}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:delete_push_regs_by_svc_toks(Ctx, SvcToks),
+    {reply, Reply, St};
+handle_call({delete_push_regs_by_tags, Tags}, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:delete_push_regs_by_tags(Ctx, Tags),
     {reply, Reply, St};
 handle_call({is_valid_push_reg, PL}, _From,
             #?S{db_mod=Mod, db_ctx=Ctx}=St)->
@@ -566,6 +728,13 @@ handle_call({reregister_ids, IdToks}, _From,
 handle_call({reregister_svc_toks, SvcToks}, _From,
             #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
     Reply = Mod:reregister_svc_toks(Ctx, SvcToks),
+    {reply, Reply, St};
+handle_call(all_registration_info, _From,
+            #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:all_registration_info(Ctx),
+    {reply, Reply, St};
+handle_call(all_reg, _From, #?S{db_mod=Mod, db_ctx=Ctx}=St) ->
+    Reply = Mod:all_reg(Ctx),
     {reply, Reply, St};
 handle_call(_Request, _From, State) ->
     Reply = {error, invalid_request},
@@ -589,6 +758,8 @@ handle_call(_Request, _From, State) ->
     {stop, Reason::term(), NewState::state()}
     .
 
+handle_cast(reconnect, State) ->
+    {noreply, connect(State)};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -606,8 +777,19 @@ handle_cast(_Msg, State) ->
     {noreply, NewState::state(), Timeout::timeout()} |
     {stop, Reason::term(), NewState::state()}
     .
+handle_info({'EXIT', From, Reason}, St) ->
+    {NewDelay, TRef} = case St#?S.timer of
+                           undefined -> % no active timer
+                               reconnect_after(St#?S.delay);
+                           Timer ->
+                               {St#?S.delay, Timer}
+                       end,
+    lager:warning("~p EXIT from ~p: ~p - attempting to reconnect in ~p ms~n",
+                  [self(), From, Reason, NewDelay]),
+    {noreply, St#?S{db_ctx=undefined, delay=NewDelay, timer=TRef}};
 handle_info(_Info, State) ->
     {noreply, State}.
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -621,11 +803,12 @@ handle_info(_Info, State) ->
 %%--------------------------------------------------------------------
 -spec terminate(Reason::terminate_reason(),
                 State::state()) -> no_return().
-terminate(shutdown, #?S{db_mod=Mod, db_ctx=Ctx}) ->
+terminate(shutdown, #?S{db_mod=Mod, db_ctx=Ctx}) when Ctx =/= undefined ->
     lager:debug("~p terminated via shutdown", [Mod]),
     (catch Mod:db_terminate(Ctx));
 terminate(Reason, St) ->
-    lager:warning("~p terminated for reason ~p", [St#?S.db_mod, Reason]).
+    lager:warning("~p ~p with unknown db shutdown status",
+                  [St#?S.db_mod, Reason]).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -642,3 +825,43 @@ terminate(Reason, St) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+%%--------------------------------------------------------------------
+-spec connect(State) -> NewState when
+      State :: state(), NewState :: state().
+connect(#?S{delay=Delay, start_args=Args}=St) ->
+    DbMod = sc_util:req_val(db_mod, Args),
+    DbConfig = sc_util:req_val(db_config, Args),
+    case DbMod:db_init(DbConfig) of
+        {ok, DbCtx} ->
+            timer:cancel(St#?S.timer),
+            St#?S{db_ctx=DbCtx,
+                  db_mod=DbMod,
+                  db_config=DbConfig,
+                  delay=?INITIAL_DELAY,
+                  timer=undefined};
+        Error ->
+            lager:warning("Error connecting via ~p: ~p, "
+                          "reconnecting in ~B ms",
+                          [DbMod, Error, Delay]),
+            {NewDelay, TRef} = reconnect_after(Delay),
+            St#?S{db_ctx=undefined,
+                  db_mod=DbMod,
+                  db_config=DbConfig,
+                  delay=NewDelay,
+                  timer=TRef}
+    end.
+
+%%--------------------------------------------------------------------
+-spec reconnect_after(DelayMs) -> Result when
+      DelayMs :: pos_integer(), Result :: {NewDelayMs, TRef},
+      TRef :: timer:tref(), NewDelayMs :: pos_integer().
+reconnect_after(DelayMs) ->
+    {ok, TRef} = timer:apply_after(DelayMs,
+                                   gen_server, cast, [self(), reconnect]),
+    {calculate_delay(DelayMs), TRef}.
+
+%%--------------------------------------------------------------------
+calculate_delay(Delay) when (Delay * 2) >= ?MAXIMUM_DELAY ->
+    ?MAXIMUM_DELAY;
+calculate_delay(Delay) ->
+    Delay * 2.

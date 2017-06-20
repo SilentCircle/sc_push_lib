@@ -110,7 +110,6 @@ sc_push_lib_test=# select current_database(), current_user, current_setting('sea
 <tr><td><a href="sc_push_lib_app.md" class="module">sc_push_lib_app</a></td></tr>
 <tr><td><a href="sc_push_lib_sup.md" class="module">sc_push_lib_sup</a></td></tr>
 <tr><td><a href="sc_push_reg_api.md" class="module">sc_push_reg_api</a></td></tr>
-<tr><td><a href="sc_push_reg_db.md" class="module">sc_push_reg_db</a></td></tr>
 <tr><td><a href="sc_push_reg_db_mnesia.md" class="module">sc_push_reg_db_mnesia</a></td></tr>
 <tr><td><a href="sc_push_reg_db_postgres.md" class="module">sc_push_reg_db_postgres</a></td></tr>
 <tr><td><a href="sc_push_req_mgr.md" class="module">sc_push_req_mgr</a></td></tr></table>

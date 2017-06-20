@@ -25,9 +25,6 @@
          db_terminate/1,
          all_reg/1,
          all_registration_info/1,
-         check_id/2,
-         check_ids/2,
-         create_tables/2,
          delete_push_regs_by_device_ids/2,
          delete_push_regs_by_ids/2,
          delete_push_regs_by_svc_toks/2,
@@ -93,12 +90,10 @@
                       {db_error, other, other_error()}.
 -type reg_id_key() :: sc_push_reg_db:reg_id_key().
 -type reg_id_keys() :: sc_push_reg_db:reg_id_keys().
--type push_reg_list() :: sc_push_reg_db:push_reg_list().
+-type push_reg_list() :: sc_push_reg_db:db_props_lookup_result().
 -type svc_tok_key() :: sc_push_reg_db:svc_tok_key().
--type posix_timestamp_milliseconds() :: non_neg_integer(). % POSIX timestamp as sent by APNS.
--type svc_tok_timestamp() :: {svc_tok_key(), posix_timestamp_milliseconds()}.
+-type mult_svc_tok_ts() :: sc_push_reg_db:mult_svc_tok_ts().
 -type reg_proplist() :: sc_types:reg_proplist().
--type reg_proplists() :: [reg_proplist()].
 -type nonempty_reg_proplists() :: [reg_proplist(), ...].
 
 %%====================================================================
@@ -127,18 +122,7 @@
       Config :: proplists:proplist(), Context :: ctx(),
       Reason :: term().
 db_init(Config) when is_list(Config) ->
-    Hostname = proplists:get_value(hostname, Config),
-    Database = proplists:get_value(database, Config),
-    Username = proplists:get_value(username, Config),
-    Password = proplists:get_value(password, Config),
-
-    case epgsql:connect(Hostname, Username, Password,
-                        [{database, Database}]) of
-        {ok, Conn} ->
-            make_context(Conn, Config);
-        {error, _Reason}=Error ->
-            Error
-    end.
+    connect(Config).
 
 %%--------------------------------------------------------------------
 %% @doc Get information about the database context passed in `Ctx'.
@@ -178,7 +162,7 @@ db_terminate(#?CTX{conn=Conn}) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec all_registration_info(Ctx) -> ListOfRegs when
-      Ctx :: ctx(), ListOfRegs :: [reg_proplist()].
+      Ctx :: ctx(), ListOfRegs :: sc_push_reg_db:mult_reg_db_props().
 all_registration_info(#?CTX{conn=Conn}) ->
     db_all_regs(Conn).
 
@@ -188,45 +172,10 @@ all_registration_info(#?CTX{conn=Conn}) ->
 %% @deprecated For debug only.
 %% @end
 %%--------------------------------------------------------------------
--spec all_reg(Ctx) -> PushRegs when
-    Ctx :: ctx(), PushRegs :: push_reg_list().
+-spec all_reg(Ctx) -> ListOfRegs when
+      Ctx :: ctx(), ListOfRegs :: sc_push_reg_db:mult_reg_db_props().
 all_reg(#?CTX{conn=Conn}) ->
     db_all_regs(Conn).
-
-%%--------------------------------------------------------------------
-%% @doc Check registration id key.
-%% Returns `ID' if it is valid.
-%% @throws {bad_reg_id, reg_id_key()}
-%% @end
-%%--------------------------------------------------------------------
--spec check_id(Ctx, ID) -> ID when
-      Ctx :: ctx(), ID :: reg_id_key().
-check_id(_Ctx, ID) ->
-    case ID of
-        {<<_, _/binary>>, <<_, _/binary>>} ->
-           ID;
-       _ ->
-           throw({bad_reg_id, ID})
-    end.
-
-%%--------------------------------------------------------------------
-%% @doc
-%% Check multiple registration id keys.
-%% @end
-%%--------------------------------------------------------------------
--spec check_ids(Ctx, IDs) -> IDs when
-      Ctx :: ctx(), IDs :: reg_id_keys().
-check_ids(Ctx, IDs) when is_list(IDs) ->
-    [check_id(Ctx, ID) || ID <- IDs].
-
-%%--------------------------------------------------------------------
-%% @doc Create tables (a no-op for Postgres).
-%% @end
-%%--------------------------------------------------------------------
--spec create_tables(Ctx, Config) -> any() when
-      Ctx :: ctx(), Config :: any().
-create_tables(_Ctx, _Config) ->
-    ok.
 
 %%--------------------------------------------------------------------
 %% @doc Delete push registrations by device ids.
@@ -237,8 +186,12 @@ create_tables(_Ctx, _Config) ->
 delete_push_regs_by_device_ids(#?CTX{conn=Conn},
                                DeviceIDs) when is_list(DeviceIDs) ->
     % In our pg db, device_ids are last_xscdevid.
-    {ok, _N} = pq(Conn, "del_regs_by_device_ids", [DeviceIDs]),
-    ok.
+    case pq(Conn, "del_regs_by_device_ids", [DeviceIDs]) of
+        {ok, _N} ->
+            ok;
+        Err ->
+            Err
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc Delete push registrations by internal registration id.
@@ -284,7 +237,7 @@ delete_push_regs_by_tags(#?CTX{conn=Conn,
 %% @end
 %%--------------------------------------------------------------------
 -spec update_invalid_timestamps_by_svc_toks(Ctx, SvcToksTs) -> Result when
-      Ctx :: ctx(), SvcToksTs :: [svc_tok_timestamp()],
+      Ctx :: ctx(), SvcToksTs :: mult_svc_tok_ts(),
       Result :: ok | {error, term()}.
 update_invalid_timestamps_by_svc_toks(#?CTX{conn=Conn,
                                             prep_qs=QMap},
@@ -301,7 +254,8 @@ update_invalid_timestamps_by_svc_toks(#?CTX{conn=Conn,
 %% @end
 %%--------------------------------------------------------------------
 -spec get_registration_info_by_device_id(Ctx, DeviceID) -> Result when
-      Ctx :: ctx(), DeviceID :: binary(), Result :: reg_proplists() | notfound.
+      Ctx :: ctx(), DeviceID :: binary(),
+      Result :: sc_push_reg_db:db_props_lookup_result().
 get_registration_info_by_device_id(#?CTX{conn=Conn}, DeviceID) ->
     get_registration_info_impl(Conn, DeviceID, fun lookup_reg_device_id/2).
 
@@ -311,7 +265,8 @@ get_registration_info_by_device_id(#?CTX{conn=Conn}, DeviceID) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec get_registration_info_by_id(Ctx, ID) -> Result when
-      Ctx :: ctx(), ID :: reg_id_key(), Result :: reg_proplists() | notfound.
+      Ctx :: ctx(), ID :: reg_id_key(),
+      Result :: sc_push_reg_db:db_props_lookup_result().
 get_registration_info_by_id(#?CTX{conn=Conn}, ID) ->
     get_registration_info_impl(Conn, ID, fun lookup_reg_id/2).
 
@@ -322,7 +277,7 @@ get_registration_info_by_id(#?CTX{conn=Conn}, ID) ->
 %%--------------------------------------------------------------------
 -spec get_registration_info_by_svc_tok(Ctx, SvcTok) -> Result when
       Ctx :: ctx(), SvcTok :: svc_tok_key(),
-      Result :: reg_proplists() | notfound.
+      Result :: sc_push_reg_db:db_props_lookup_result().
 get_registration_info_by_svc_tok(#?CTX{conn=Conn},
                                  {_Service, _Token} = SvcTok) ->
     get_registration_info_impl(Conn, SvcTok, fun lookup_svc_tok/2).
@@ -333,7 +288,7 @@ get_registration_info_by_svc_tok(#?CTX{conn=Conn},
 %%--------------------------------------------------------------------
 -spec get_registration_info_by_tag(Ctx, Tag) -> Result when
       Ctx :: ctx(), Tag :: binary(),
-      Result :: reg_proplists() | notfound.
+      Result :: sc_push_reg_db:db_props_lookup_result().
 get_registration_info_by_tag(#?CTX{conn=Conn}, Tag) ->
     get_registration_info_impl(Conn, Tag, fun lookup_reg_tag/2).
 
@@ -411,7 +366,7 @@ prepare_statements(Conn) ->
     PTQueries = push_tokens_queries(?DB_PUSH_TOKENS_TBL),
     case prepared_queries(Conn, PTQueries) of
         {PrepQs, []} ->
-            handle_error(pq(Conn, "create_upsert_func", [])),
+            check_fatal_error(pq(Conn, "create_upsert_func", [])),
             {ok, maps:from_list([{S#statement.name, S} || S <- PrepQs])};
         {_, Errors} ->
             {error, Errors}
@@ -434,7 +389,9 @@ make_upsert_params([_|_]=PL) ->
 %%--------------------------------------------------------------------
 %% @private
 %% For debugging only - if called on large db, unhappy days ahead.
--spec db_all_regs(term()) -> push_reg_list().
+-spec db_all_regs(Conn) -> ListOfRegs when
+      Conn:: conn(),
+      ListOfRegs :: sc_push_reg_db:mult_reg_db_props().
 db_all_regs(Conn) ->
     do_reg_pquery(Conn, "all_regs", []).
 
@@ -942,6 +899,30 @@ call_upsert_function(SchemaPrefix) ->
 schema_prefix() ->
     list_to_binary(?DB_SCHEMA_PREFIX).
 
+
+%%--------------------------------------------------------------------
+check_fatal_error({error, _}=E) ->
+    lager:error("~p", [translate_error(E)]),
+    erlang:error(E);
+check_fatal_error(E) when is_tuple(E) andalso
+                          tuple_size(E) >= 1 andalso
+                          element(1, E) =:= ok ->
+    E.
+
+%%--------------------------------------------------------------------
+translate_error({error, #error{}=E}) ->
+    {db_error, pg_errstr(E)};
+translate_error({error, {unsupported_auth_method, Method}}) -> % required auth method is unsupported
+    {db_unsupported_auth_method, Method};
+translate_error({error, timeout}) -> % request timed out
+    db_timeout;
+translate_error({error, closed})  -> % connection was closed
+    db_closed;
+translate_error({error, sync_required}) -> % error occured and epgsql:sync must be called
+    db_sync_required;
+translate_error(Other) ->
+    Other.
+
 %%--------------------------------------------------------------------
 %-record(error, {
 %    % see client_min_messages config option
@@ -955,23 +936,28 @@ schema_prefix() ->
 %               binary()}]
 %}).
 
-handle_error({error, #error{}=E}) ->
-    lager:error("~s", [pg_errstr(E)]),
-    throw(E);
-handle_error({error, {unsupported_auth_method, Method}}) -> % required auth method is unsupported
-    erlang:error({db_unsupported_auth_method, Method});
-handle_error({error, timeout}) -> % request timed out
-    erlang:error(db_timeout);
-handle_error({error, closed})  -> % connection was closed
-    erlang:error(db_closed);
-handle_error({error, sync_required}) -> % error occured and epgsql:sync must be called
-    erlang:error(db_sync_required);
-handle_error(NotAnError) ->
-    NotAnError.
-
-%%--------------------------------------------------------------------
 pg_errstr(#error{}=E) ->
-    io_lib:format("postgres[~p] ~p[~s]: ~s",
-                  [E#error.severity, E#error.codename, E#error.code,
-                   E#error.message]).
+    lists:flatten(
+      io_lib:format("postgres[~p] ~p[~s]: ~s",
+                    [E#error.severity, E#error.codename, E#error.code,
+                     E#error.message])).
 
+connect(Config) ->
+    case epgsql:connect(Config) of
+        {ok, Conn} ->
+            make_context(Conn, Config);
+        Error ->
+            lager:warning("~p connect error: ~p", [Error]),
+            connect_error(Error)
+    end.
+
+connect_error(#error{}=E) ->
+    translate_error({error, E});
+connect_error({unsupported_auth_method, _}=Reason) ->
+    {error, Reason};
+connect_error(invalid_authorization_specification=Reason) ->
+    {error, Reason};
+connect_error(invalid_password=Reason) ->
+    {error, Reason};
+connect_error(UnknownError) ->
+    {error, UnknownError}.
