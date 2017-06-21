@@ -54,40 +54,12 @@ init([]) ->
       Result :: {ok, Dir}, Dir :: string().
 internal_db_init() ->
     Me = node(),
-    Dir = case application:get_env(mnesia, dir) of
-              undefined ->
-                  D = "Mnesia." ++ atom_to_list(Me),
-                  application:set_env(mnesia, dir, D),
-                  D;
-              {ok, D} ->
-                  D
-          end,
+    Dir = mnesia_dir(Me),
     lager:debug("Mnesia database dir: ~p", [Dir]),
     lager:debug("Initializing mnesia database on ~p", [Me]),
 
-    mnesia:stop(),
-    DbNodes = mnesia:system_info(db_nodes),
-
-    case lists:member(Me, DbNodes) of
-        true ->
-            ok;
-        false ->
-            lager:error("Node name mismatch: This node is [~s], "
-                        "the database is owned by ~p", [Me, DbNodes]),
-            erlang:error(node_name_mismatch)
-    end,
-    case mnesia:system_info(use_dir) of % Is there a disc-based schema?
-        false ->
-            lager:debug("About to create schema on ~p", [Me]),
-            case mnesia:create_schema([Me]) of
-                ok ->
-                    lager:debug("Created mnesia database schema on ~p", [Me]);
-                {error, {Me, {already_exists, Me}}} ->
-                    lager:debug("mnesia schema already exists on ~p", [Me])
-            end;
-        true ->
-            lager:debug("No mnesia schema creation required.")
-    end,
+    ensure_schema(Me),
+    ensure_correct_node(Me, mnesia:system_info(db_nodes)),
     lager:info("Starting mnesia database in dir ~p on node ~p", [Dir, Me]),
     ok = mnesia:start(),
     lager:info("Waiting for mnesia tables on node ~p", [Me]),
@@ -96,3 +68,47 @@ internal_db_init() ->
     mnesia:stop(),
     {ok, Dir}.
 
+
+ensure_correct_node(Node, DbNodes) ->
+    case lists:member(Node, DbNodes) of
+        true ->
+            ok;
+        false ->
+            lager:error("Node name mismatch: This node is [~s], "
+                        "the database is owned by ~p", [Node, DbNodes]),
+            erlang:error(node_name_mismatch)
+    end.
+
+ensure_schema(Node) ->
+    case mnesia:system_info(use_dir) of % Is there a disc-based schema?
+        false ->
+            lager:info("About to create mnesia schema on ~p", [Node]),
+            mnesia:stop(),
+            case mnesia:create_schema([Node]) of
+                ok ->
+                    lager:info("Created mnesia database schema on ~p", [Node]);
+                {error, {Node, {already_exists, Node}}} ->
+                    lager:debug("mnesia schema already exists on ~p", [Node])
+            end;
+        true ->
+            ok
+    end,
+    mnesia:start(),
+    case mnesia:table_info(schema, disc_copies) of
+        [] ->
+            {atomic, ok} = mnesia:change_table_copy_type(schema, Node,
+                                                         disc_copies);
+        [_|_] = L ->
+            true = lists:member(Node, L)
+    end,
+    mnesia:stop().
+
+mnesia_dir(Node) ->
+    case application:get_env(mnesia, dir) of
+        undefined ->
+            D = "Mnesia." ++ atom_to_list(Node),
+            application:set_env(mnesia, dir, D),
+            D;
+        {ok, D} ->
+            D
+    end.
