@@ -29,8 +29,8 @@ CREATE TABLE IF NOT EXISTS scpf.push_tokens (
   type VARCHAR(10) NOT NULL,
   token VARCHAR(512) DEFAULT 'text/plain',
   appname VARCHAR(64) NOT NULL,
-  created_on TIMESTAMP WITHOUT TIME ZONE DEFAULT now(),
-  last_seen_on TIMESTAMP WITHOUT TIME ZONE DEFAULT now(),
+  created_on TIMESTAMP WITHOUT TIME ZONE DEFAULT (now() at time zone 'utc'),
+  last_seen_on TIMESTAMP WITHOUT TIME ZONE DEFAULT (now() at time zone 'utc'),
   last_invalid_on TIMESTAMP WITHOUT TIME ZONE,
   last_xscdevid VARCHAR(64) NOT NULL
 );
