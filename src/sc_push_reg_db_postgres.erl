@@ -350,8 +350,14 @@ reregister_svc_toks(#?CTX{conn=Conn,
 %%--------------------------------------------------------------------
 make_context(Conn, Config) ->
     try
-        {ok, PrepQs} = prepare_statements(Conn),
-        {ok, #?CTX{conn=Conn, config=Config, prep_qs=PrepQs}}
+        %% Create temp table to ensure there exists a pg_temp schema.
+        ok = ensure_temp_schema(Conn),
+        ok = create_stored_procedures(Conn, ?DB_PUSH_TOKENS_TBL),
+        PTQueries = push_tokens_queries(?DB_PUSH_TOKENS_TBL),
+        {ok, PrepQs} = prepare_statements(Conn, PTQueries),
+        {ok, #?CTX{conn=Conn,
+                   config=Config,
+                   prep_qs=PrepQs}}
     catch
         _:Error ->
             (catch epgsql:close(Conn)),
@@ -359,18 +365,28 @@ make_context(Conn, Config) ->
     end.
 
 %%--------------------------------------------------------------------
--spec prepare_statements(Conn) -> Result when
-      Conn :: conn(), Result :: {ok, PrepQs} | {error, Reason},
-      PrepQs :: map(), Reason :: any().
-prepare_statements(Conn) ->
-    PTQueries = push_tokens_queries(?DB_PUSH_TOKENS_TBL),
-    case prepared_queries(Conn, PTQueries) of
-        {PrepQs, []} ->
-            check_fatal_error(pq(Conn, "create_upsert_func", [])),
-            {ok, maps:from_list([{S#statement.name, S} || S <- PrepQs])};
-        {_, Errors} ->
-            {error, Errors}
-    end.
+-spec prepare_statements(Conn, Queries) -> Result when
+      Conn :: conn(), Queries :: [{StmtName, QueryIoList}],
+      StmtName :: query_name(), QueryIoList :: iolist(),
+      Result :: {ok, PrepQs} | {error, Reason},
+      PrepQs :: map(), Reason :: [any()].
+prepare_statements(Conn, Queries) ->
+    PrepQs = prepared_queries(Conn, Queries),
+    {ok, maps:from_list([{S#statement.name, S} || S <- PrepQs])}.
+
+%%--------------------------------------------------------------------
+ensure_temp_schema(Conn) ->
+    Query = "create temp table if not exists temp_junk_(x integer);",
+    {ok, [], []} = epgsql:squery(Conn, Query),
+    ok.
+
+%%--------------------------------------------------------------------
+-spec my_temp_schema_name(Conn) -> Name when
+      Conn :: conn(), Name :: binary().
+my_temp_schema_name(Conn) ->
+    Query = "select nspname from pg_namespace where oid = pg_my_temp_schema();",
+    {ok, _Cols, [{TempSchemaName}]} = epgsql:squery(Conn, Query),
+    TempSchemaName.
 
 %%--------------------------------------------------------------------
 %% Database functions
@@ -460,6 +476,8 @@ push_reg_maps_to_props(Maps) ->
                                        ) || M <- Maps].
 
 %%--------------------------------------------------------------------
+%% @private
+%% @doc Run a prepared query
 -spec pq(Conn, QueryName, Args) -> Reply when
       Conn :: conn(), QueryName :: query_name(), Args :: [bind_param()],
       Reply :: {ok, Count}
@@ -483,6 +501,8 @@ pq(Conn, QueryName, Args) ->
 
 %%--------------------------------------------------------------------
 -compile({inline, [{epq, 3}]}).
+%% @private
+%% @equiv epgsql:prepared_query(C, Q, Args)
 -spec epq(C, Q, Args) -> Reply when
       C :: conn(), Q :: string(), Args :: [bind_param()],
       Reply :: reply(row()).
@@ -496,7 +516,7 @@ epq(C, Q, Args) ->
 do_batch(Conn, Batch) ->
     {ok, [], []} = epgsql:squery(Conn, "BEGIN"),
     L = epgsql:execute_batch(Conn, Batch),
-    case lists:partition(fun(T) ->
+    try lists:partition(fun(T) ->
                                  element(1, T) =:= ok
                          end, L) of
         {_, []} -> % All good
@@ -505,6 +525,10 @@ do_batch(Conn, Batch) ->
         {_, Errs} ->
             epgsql:squery(Conn, "ROLLBACK"),
             {error, Errs}
+    catch
+        _:Err ->
+            epgsql:squery(Conn, "ROLLBACK"),
+            {error, Err}
     end.
 
 %%--------------------------------------------------------------------
@@ -707,34 +731,36 @@ float_secs_to_int(Secs) when is_integer(Secs) ->
     {Secs, 0}.
 
 %%--------------------------------------------------------------------
--spec prepared_queries(Conn, Queries) -> Result when
-      Conn :: epgsql:connection(),
-      Queries :: [{StmtName, QueryIoList}], StmtName :: query_name(),
-      QueryIoList :: iolist(),
-      Result :: {Stmts, Errs}, Stmts :: [stmt()], Errs :: [{error, Reason}],
-      Reason :: epgsql:query_error().
+-spec prepared_queries(Conn, Queries) -> Stmts when
+      Conn :: epgsql:connection(), Queries :: [{StmtName, QueryIoList}],
+      StmtName :: query_name(), QueryIoList :: iolist(), Stmts :: [stmt()].
 prepared_queries(Conn, Queries) ->
-    {S, E} = lists:foldl(fun({QName, Q}, {Stmts, Errs}) ->
-                        case prepare(Conn, QName, Q) of
-                            {ok, Stmt} ->
-                                {[Stmt|Stmts], Errs};
-                            {error, Err} ->
-                                {Stmts, [Err|Errs]}
-                        end
-                end, {[], []}, Queries),
-    lager:debug("Queries prepared successfully: ~B; failed: ~B",
-                [length(S), length(E)]),
-    {S, E}.
-
+    Stmts = lists:foldl(fun({QName, Q}, Acc) ->
+                                [parse(Conn, QName, Q) | Acc]
+                        end, [], Queries),
+    lager:debug("Queries parsed successfully: ~B", [length(Stmts)]),
+    Stmts.
 
 %%--------------------------------------------------------------------
--compile({inline, [{prepare,3}]}).
-prepare(Conn, QueryName, Query) ->
-    lager:debug("Preparing query ~s: [~s]",
-                [QueryName, list_to_binary(Query)]),
-    epgsql:parse(Conn, QueryName, Query, []).
+-spec parse(Conn, QueryName, Query) -> Stmt when
+      Conn :: conn(), QueryName :: query_name(), Query :: iolist(),
+      Stmt :: stmt().
+parse(Conn, QueryName, Query) ->
+    case epgsql:parse(Conn, QueryName, Query, []) of
+        {ok, Stmt} ->
+            lager:debug("SUCCESS, prepared query ~s: [~s]",
+                        [QueryName, list_to_binary(Query)]),
+            Stmt;
+        {error, Err} ->
+            lager:error("Error (~p) preparing query ~s: [~s]",
+                        [Err, QueryName, list_to_binary(Query)]),
+            erlang:error(Err)
+    end.
 
 %%--------------------------------------------------------------------
+-spec push_tokens_queries(Tab) -> Queries when
+      Tab :: iolist(), Queries :: [{Name, Query}],
+      Name :: string(), Query :: iolist().
 push_tokens_queries(Tab) ->
     Tbl = sc_util:to_bin(Tab),
     Cols = push_tokens_colnames_iolist(),
@@ -774,13 +800,23 @@ push_tokens_queries(Tab) ->
      {"update_reg",
       [<<"update ">>, Tbl,
        <<" set uuid = $1, type = $2, token = $3,">>,
-       <<" appname = $4, last_xscdevid = $5, last_seen_on = now() ">>,
+       <<" appname = $4, last_xscdevid = $5, last_seen_on = now() at time zone 'utc' ">>,
        <<" where id = $6">>]},
-     {"delete_upsert_func", delete_upsert_func(schema_prefix())},
-     {"create_upsert_func",
-      make_upsert_function_query(Tbl, schema_prefix())},
-     {"call_upsert_func", call_upsert_function(schema_prefix())}
+     {"call_upsert_func", make_call_upsert_function()}
     ].
+
+%%--------------------------------------------------------------------
+create_stored_procedures(Conn, Tbl) ->
+    ok = create_sp_upsert(Conn, Tbl).
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc Create the upsert stored procedure
+create_sp_upsert(Conn, Tbl) ->
+     Q = make_upsert_function_query(Tbl),
+     {ok, [], []} = epgsql:squery(Conn, Q),
+     lager:debug("Created upsert function: ~s", [sc_util:to_bin(Q)]),
+     ok.
 
 %%--------------------------------------------------------------------
 push_tokens_colnames() ->
@@ -839,19 +875,24 @@ make_delete_query(Tbl, WhereCondition) ->
     [<<"delete from ">>, Tbl, <<" where ">>, WhereCondition].
 
 %%--------------------------------------------------------------------
--spec make_upsert_function_query(Tbl, SchemaPrefix) -> Query when
-      Tbl :: binary(), SchemaPrefix :: binary(), Query :: iolist().
-make_upsert_function_query(Tbl, SchemaPrefix) ->
-    [<<"create or replace function ">>, SchemaPrefix, <<"push_tokens_upsert">>,
+%% @private
+%% @doc We're using the pg_temp namespace here so that the stored procedure is
+%% not persisted, which otherwise causes a "tuple concurrently updated" error.
+-spec make_upsert_function_query(Tbl) -> Query when
+      Tbl :: binary(), Query :: iolist().
+make_upsert_function_query(Tbl) ->
+    [<<"create or replace function pg_temp.push_tokens_upsert">>,
      <<"(uuid_ text, type_ text, token_ text, appname_ text, xscdevid_ text)
-            returns integer as $$
+            returns integer
+            language plpgsql
+            strict
+       as $function$
           declare
             r record;
           begin
             select a.id,
-                a.last_seen_on < now() - interval '1 day' as needs_atime,
-                a.last_xscdevid is null
-                or a.last_xscdevid <> xscdevid_ as needs_xscdevid
+                a.last_seen_on < (now() at time zone 'utc') - (interval '1 day') as needs_atime,
+                a.last_xscdevid is null or a.last_xscdevid <> xscdevid_ as needs_xscdevid
                 into r
               from ">>, Tbl, <<" a
               where a.uuid = uuid_
@@ -865,11 +906,11 @@ make_upsert_function_query(Tbl, SchemaPrefix) ->
               return 1;
             else
               if r.needs_atime or r.needs_xscdevid then
-                update ">>, Tbl, <<" set last_seen_on = now()
+                update ">>, Tbl, <<" set last_seen_on = now() at time zone 'utc'
                   where id = r.id;
                 if r.needs_xscdevid then
-                  update ">>, Tbl,
-     <<" set last_xscdevid = xscdevid_
+                  update ">>, Tbl, <<
+                  " set last_xscdevid = xscdevid_
                     where id = r.id;
                   return 3;
                 end if;
@@ -878,21 +919,14 @@ make_upsert_function_query(Tbl, SchemaPrefix) ->
             end if;
             return 0;
           end;
-          $$ language plpgsql volatile strict;">>].
+       $function$;">>].
 
 %%--------------------------------------------------------------------
--spec delete_upsert_func(SchemaPrefix) -> Query when
-      SchemaPrefix :: binary(), Query :: iolist().
-delete_upsert_func(SchemaPrefix) ->
-    [<<"drop function if exists ">>,
-     SchemaPrefix, <<"push_tokens_upsert(text,text,text,text,text)">>].
-
-%%--------------------------------------------------------------------
--spec call_upsert_function(SchemaPrefix) -> Query when
-      SchemaPrefix :: binary(), Query :: iolist().
-call_upsert_function(SchemaPrefix) ->
-    [<<"select ">>, SchemaPrefix,
-     <<"push_tokens_upsert($1, $2, $3, $4, $5)">>].
+-spec make_call_upsert_function() -> Query when
+      Query :: iolist().
+make_call_upsert_function() ->
+    [<<"select pg_temp.push_tokens_upsert">>,
+     <<"($1::text, $2::text, $3::text, $4::text, $5::text)">>].
 
 %%--------------------------------------------------------------------
 -spec schema_prefix() -> binary().
@@ -901,12 +935,12 @@ schema_prefix() ->
 
 
 %%--------------------------------------------------------------------
-check_fatal_error({error, _}=E) ->
+check_error({error, _}=E) ->
     lager:error("~p", [translate_error(E)]),
     erlang:error(E);
-check_fatal_error(E) when is_tuple(E) andalso
-                          tuple_size(E) >= 1 andalso
-                          element(1, E) =:= ok ->
+check_error(E) when is_tuple(E) andalso
+                    tuple_size(E) >= 1 andalso
+                    element(1, E) =:= ok ->
     E.
 
 %%--------------------------------------------------------------------
@@ -947,7 +981,7 @@ connect(Config) ->
         {ok, Conn} ->
             make_context(Conn, Config);
         Error ->
-            lager:warning("~p connect error: ~p", [Error]),
+            lager:warning("~p connect error: ~p", [?MODULE, Error]),
             connect_error(Error)
     end.
 
