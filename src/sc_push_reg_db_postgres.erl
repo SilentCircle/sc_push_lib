@@ -51,6 +51,8 @@
 -include("sc_push_lib.hrl").
 -include_lib("epgsql/include/epgsql.hrl").
 
+-define(ROLE, pool_worker).
+
 -ifndef(NO_SCHEMA).
 -define(DB_SCHEMA, "scpf").
 -define(DB_SCHEMA_PREFIX, ?DB_SCHEMA ".").
@@ -77,7 +79,6 @@
 %% epgsql type aliases
 -type conn() :: epgsql:connection().
 -type bind_param() :: epgsql:bind_param().
--type reply(T) :: epgsql:reply(T).
 -type equery_row() :: epgsql:equery_row().
 -type row() :: equery_row().
 
@@ -312,6 +313,8 @@ is_valid_push_reg(#?CTX{}, PL) ->
       Ctx :: ctx(), NonemptyRegProplists :: nonempty_reg_proplists(),
       Result :: ok | {error, term()}.
 save_push_regs(#?CTX{conn=Conn, prep_qs=QMap}, [_|_]=NonemptyRegProplists) ->
+    %% DEBUG
+    lager:debug("[~p:~p] Called save_push_regs", [?ROLE, self()]),
     Stmt = maps:get("call_upsert_func", QMap),
     Batch = [{Stmt, make_upsert_params(PL)} || PL <- NonemptyRegProplists],
     do_batch(Conn, Batch).
@@ -352,7 +355,7 @@ make_context(Conn, Config) ->
     try
         %% Create temp table to ensure there exists a pg_temp schema.
         ok = ensure_temp_schema(Conn),
-        ok = create_stored_procedures(Conn, ?DB_PUSH_TOKENS_TBL),
+        ok = create_local_functions(Conn, ?DB_PUSH_TOKENS_TBL),
         PTQueries = push_tokens_queries(?DB_PUSH_TOKENS_TBL),
         {ok, PrepQs} = prepare_statements(Conn, PTQueries),
         {ok, #?CTX{conn=Conn,
@@ -377,16 +380,11 @@ prepare_statements(Conn, Queries) ->
 %%--------------------------------------------------------------------
 ensure_temp_schema(Conn) ->
     Query = "create temp table if not exists temp_junk_(x integer);",
-    {ok, [], []} = epgsql:squery(Conn, Query),
+    {ok, [], []} = epgsql:with_transaction(Conn,
+                                           fun(C) ->
+                                                   epgsql:squery(C, Query)
+                                           end),
     ok.
-
-%%--------------------------------------------------------------------
--spec my_temp_schema_name(Conn) -> Name when
-      Conn :: conn(), Name :: binary().
-my_temp_schema_name(Conn) ->
-    Query = "select nspname from pg_namespace where oid = pg_my_temp_schema();",
-    {ok, _Cols, [{TempSchemaName}]} = epgsql:squery(Conn, Query),
-    TempSchemaName.
 
 %%--------------------------------------------------------------------
 %% Database functions
@@ -496,6 +494,9 @@ pq(Conn, QueryName, Args) ->
         {ok, Count, Columns, Rows} ->
             {ok, Count, pg2scpf_maps(Columns, Rows)};
         {error, #error{}=E} ->
+            {error, pg2scpf_err(E)};
+        {rollback, Err}=E ->
+            lager:error("Transaction rollback: ~p", [Err]),
             {error, pg2scpf_err(E)}
     end.
 
@@ -505,29 +506,34 @@ pq(Conn, QueryName, Args) ->
 %% @equiv epgsql:prepared_query(C, Q, Args)
 -spec epq(C, Q, Args) -> Reply when
       C :: conn(), Q :: string(), Args :: [bind_param()],
-      Reply :: reply(row()).
+      Reply :: any() | {rollback, any()}.
 epq(C, Q, Args) ->
-    epgsql:prepared_query(C, Q, Args).
+    Txn = fun(Conn) -> epgsql:prepared_query(Conn, Q, Args) end,
+    epgsql:with_transaction(C, Txn).
 
 %%--------------------------------------------------------------------
 -spec do_batch(Conn, Batch) -> Result when
       Conn :: conn(), Batch :: [{stmt(), [bind_param()]}],
       Result :: ok | {error, term()}.
 do_batch(Conn, Batch) ->
+    Pid = self(),
     {ok, [], []} = epgsql:squery(Conn, "BEGIN"),
-    L = epgsql:execute_batch(Conn, Batch),
+    lager:debug("[~p:~p] Ok: do_batch ~s", [?ROLE, Pid, "BEGIN"]),
     try lists:partition(fun(T) ->
-                                 element(1, T) =:= ok
-                         end, L) of
+                                element(1, T) =:= ok
+                        end, epgsql:execute_batch(Conn, Batch)) of
         {_, []} -> % All good
             {ok, [], []} = epgsql:squery(Conn, "COMMIT"),
+            lager:debug("[~p:~p] Ok: do_batch ~s", [?ROLE, Pid, "COMMIT"]),
             ok;
         {_, Errs} ->
-            epgsql:squery(Conn, "ROLLBACK"),
+            {ok, [], []} = epgsql:squery(Conn, "ROLLBACK"),
+            lager:debug("[~p:~p] Ok: do_batch ~s", [?ROLE, Pid, "ROLLBACK"]),
             {error, Errs}
     catch
         _:Err ->
-            epgsql:squery(Conn, "ROLLBACK"),
+            {ok, [], []} = epgsql:squery(Conn, "ROLLBACK"),
+            lager:debug("[~p:~p] Ok: do_batch ~s", [?ROLE, Pid, "ROLLBACK"]),
             {error, Err}
     end.
 
@@ -735,11 +741,18 @@ float_secs_to_int(Secs) when is_integer(Secs) ->
       Conn :: epgsql:connection(), Queries :: [{StmtName, QueryIoList}],
       StmtName :: query_name(), QueryIoList :: iolist(), Stmts :: [stmt()].
 prepared_queries(Conn, Queries) ->
-    Stmts = lists:foldl(fun({QName, Q}, Acc) ->
-                                [parse(Conn, QName, Q) | Acc]
-                        end, [], Queries),
-    lager:debug("Queries parsed successfully: ~B", [length(Stmts)]),
-    Stmts.
+    Txn = fun(C) ->
+                  lists:foldl(fun({QName, Q}, Acc) ->
+                                      [parse(C, QName, Q) | Acc]
+                              end, [], Queries)
+          end,
+    case epgsql:with_transaction(Conn, Txn) of
+        {rollback, _}=Err ->
+            erlang:error(pg2scpf_err(Err));
+        Stmts ->
+            lager:debug("Queries parsed successfully: ~B", [length(Stmts)]),
+            Stmts
+    end.
 
 %%--------------------------------------------------------------------
 -spec parse(Conn, QueryName, Query) -> Stmt when
@@ -806,15 +819,11 @@ push_tokens_queries(Tab) ->
     ].
 
 %%--------------------------------------------------------------------
-create_stored_procedures(Conn, Tbl) ->
-    ok = create_sp_upsert(Conn, Tbl).
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc Create the upsert stored procedure
-create_sp_upsert(Conn, Tbl) ->
+create_local_functions(Conn, Tbl) ->
      Q = make_upsert_function_query(Tbl),
-     {ok, [], []} = epgsql:squery(Conn, Q),
+     {ok, [], []} = epgsql:with_transaction(Conn, fun(C) ->
+                                                          epgsql:squery(C, Q)
+                                                  end),
      lager:debug("Created upsert function: ~s", [sc_util:to_bin(Q)]),
      ok.
 
@@ -977,11 +986,15 @@ pg_errstr(#error{}=E) ->
                      E#error.message])).
 
 connect(Config) ->
+    Pid = self(),
+    lager:info("[~p:~p] Initializing", [?ROLE, Pid]),
     case epgsql:connect(Config) of
         {ok, Conn} ->
+            DB = proplists:get_value(database, Config, ""),
+            lager:info("[~p:~p] Connected to database ~s", [?ROLE, Pid, DB]),
             make_context(Conn, Config);
         Error ->
-            lager:warning("~p connect error: ~p", [?MODULE, Error]),
+            lager:warning("[~p:~p] connect error: ~p", [?ROLE, Pid, Error]),
             connect_error(Error)
     end.
 
