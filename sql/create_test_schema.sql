@@ -1,17 +1,10 @@
-DROP USER IF EXISTS scadmin;
-CREATE USER scadmin
-    WITH SUPERUSER CREATEDB CREATEROLE REPLICATION
-    PASSWORD 'changeme';
-
-CREATE DATABASE silentcircle WITH OWNER scadmin;
-
-\connect silentcircle
+\connect scsrsdata
 
 --
 -- Create schemas
 --
 
-CREATE SCHEMA IF NOT EXISTS scpf AUTHORIZATION scadmin;
+CREATE SCHEMA IF NOT EXISTS scpf AUTHORIZATION postgres;
 
 --
 -- Set up scpf schema
@@ -21,7 +14,6 @@ SET search_path = scpf, pg_catalog;
 --
 -- Table: scpf.push_tokens
 --
-DROP TABLE IF EXISTS scpf.push_tokens;
 CREATE TABLE IF NOT EXISTS scpf.push_tokens (
   id SERIAL NOT NULL,
   uuid VARCHAR(64) NOT NULL,
