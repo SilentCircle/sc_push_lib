@@ -7,7 +7,7 @@
        {ref,"7447cd51af73b4ff7947237a4be0a58ece34feb2"}},
   0},
  {<<"goldrush">>,
-  {git,"git://github.com/DeadZen/goldrush.git",
+  {git,"https://github.com/DeadZen/goldrush.git",
        {ref,"212299233c7e7eb63a97be2777e1c05ebaa58dbe"}},
   1},
  {<<"jsx">>,
@@ -23,6 +23,6 @@
        {ref,"d378f996182daa6251ad5438cee4d3f6eb7ea50f"}},
   0},
  {<<"sc_util">>,
-  {git,"git@github.com:SilentCircle/sc_util.git",
+  {git,"https://github.com/SilentCircle/sc_util.git",
        {ref,"7a0a7579e8b9ceed387364d5376123d95f252ec0"}},
   0}].
