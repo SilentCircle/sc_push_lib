@@ -110,12 +110,14 @@
 %%
 %% Return an opaque context for use with the other API calls.
 %%
+%% === Parameters ===
+%%
 %% <dl>
 %%  <dt>`Config'</dt>
 %%  <dd>This may be provided one of the following formats:
 %%   <ul>
-%%     <li><em>Simple format</em>A property list containing at least
-%%     the following properties (plus any others supported by
+%%     <li><b>Simple format</b>: A property list containing at
+%%     least the following properties (plus any others supported by
 %%     `epgsql', to which the property list is passed directly):
 %%      <dl>
 %%        <dt>`hostname :: string()'</dt><dd>Postgres host name</dd>
@@ -124,8 +126,8 @@
 %%        <dt>`password :: string()'</dt><dd>User/role password</dd>
 %%      </dl>
 %%     </li>
-%%     <li><em>Extended format</em>A map with the following keys and
-%%     values:
+%%     <li><b>Extended format</b>: A map with the following keys
+%%     and values:
 %%      <dl>
 %%       <dt>`connection :: proplist()' (required)</dt>
 %%         <dd>A property list as defined in the <em>Simple

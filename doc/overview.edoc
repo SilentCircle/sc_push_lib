@@ -9,38 +9,119 @@ It includes all database support.
 
 == Database support ==
 
-`sc_push_lib' requires at least Mnesia for local, non-replicated data, and
-supports Mnesia and Postgres >= 9.4 for storage of registered push tokens.
+`sc_push_lib' requires at least Mnesia for local, non-replicated
+data, and supports Mnesia and Postgres >= 9.4 for storage of
+registered push tokens.
 
-Although `sc_push_lib' will automatically create local Mnesia database tables,
-if using Postgres as a backend for push token storage, the Postgres database
-and tables must be pre-created.
+Although `sc_push_lib' will automatically create local Mnesia
+database tables, if using Postgres as a backend for push token
+storage, the Postgres database and tables must be pre-created.
 
 This is also true for running CommonTest (`make ct').
 
-=== Postgres ===
+=== Database Selection ===
 
-`sc_push_lib' uses a Postgres schema to avoid namespacing issues
-and obviate the need for a separate production database for its
-tables (although nothing stops you from putting the tables in a separate
-database anyway).
+As already mentioned, Mnesia is always used for local data, but you
+can choose between Mnesia and Postgres for push token storage.
 
-For running CommonTest cases, it's probably best to create a totally separate
-database on localhost, and an sql script is provided to assist with that.
+To select the database you want to use for push token storage,
+change the `db_mod' tuple in the `sc_push_lib' part of `sys.config'
+to the name of one of the available database backend modules. See
+the sample `config/shell.config' for exact syntax.
 
-**Hint**: After logging on as the database user, you will want to
-set the search path as follows:
+==== Currently available modules ====
 
-``SET search_path = 'scpf', 'pg_common';''
+<dl>
+<dt>`sc_push_reg_db_mnesia'</dt>
+ <dd>Mnesia push token backend</dd>
+<dt>`sc_push_reg_db_postgres'</dt>
+ <dd>Postgres push token backend</dd>
+</dl>
 
-If you fail to do this, the `psql' `\d' command may display
+You will need to restart scpf to make this change active.
 
 ```
-No relations found.
+%% ...
+{sc_push_lib,
+ [
+  {db_pools,
+   [
+    {sc_push_reg_pool,
+    [ % sizeargs
+      % ...
+    ],
+    [ % workerargs
+      {db_mod, sc_push_reg_db_postgres},
+      % ...
+    ]}]}]
+}
+%% ...
 '''
+
+=== Postgres Configuration ===
+
+`sc_push_lib' uses the default `public' Postgres schema for maximum
+compatibility.  However, this can be overridden in the `sys.config`,
+as can the push token table name, for flexibility. Using a different
+schema name helps to avoid namespacing issues, and obviates the need
+for a separate production database for its tables (although nothing
+stops you from putting the tables in a separate database anyway).
+
+For running CommonTest cases, it is probably wise to create a
+totally separate database on localhost, and an sql script is
+provided to assist with that.
+
+**Hint**: When testing, after logging on as the database user, you
+may want to set the search path as follows:
+
+<code>
+SET search_path = &#39;scpf&#39;,&#39;pg_common&#39;;
+</code>
+
+If you fail to do this, the `psql' `` \d '' command may display
+`No relations found.'
 
 ==== Production database setup ====
 
+Modify the test script to suit your environment and create the
+scpf table(s) accordingly.
+
+Modify the `sys.config` to match your environment, by adding
+a section similar to that shown in the example below.
+
+The settings for `table_config' key as shown are the defaults, so
+the entire key could be omitted. Leaving it in does make it more
+obvious where things are found, though.
+
+```
+ %% ...
+ {sc_push_lib,
+  [
+   {db_pools,
+    [
+     {sc_push_reg_pool, % name
+      [ % sizeargs
+       {size, 50},
+       {max_overflow, 0}
+      ],
+      [ % workerargs
+       {db_mod, sc_push_reg_db_postgres},
+       {db_config, #{connection => [
+                                    {hostname, "localhost"},
+                                    {database, "sc_push_lib_test"},
+                                    {username, "sc_push_lib_test"},
+                                    {password, "test"}
+                                   ],
+                     table_config => [
+                                      {table_schema, "public"},
+                                      {table_name, "push_tokens"}
+                                     ]
+                    }}
+      ]}
+    ]}
+  ]}
+  %% ...
+'''
 
 ==== Test database setup ====
 
@@ -51,26 +132,32 @@ username and password be used as configured in `test/test.config':
 
 ```
 {connect_info,
- #{postgres => [
-                {hostname, "localhost"},
-                {database, "sc_push_lib_test"},
-                {username, "sc_push_lib_test"},
-                {password, "test"}
-               ]
+ #{postgres => #{connection => [
+                                {hostname, "localhost"},
+                                {database, "sc_push_lib_test"},
+                                {username, "sc_push_lib_test"},
+                                {password, "test"}
+                               ],
+                 table_config => [
+                                  {table_schema, "scpf"},
+                                  {table_name, "push_tokens"}
+                                 ]
+                }
   }
 }.
 '''
 
 <ul>
-<li>Edit `/etc/postgresql/<version>/<cluster>/pg_ident.conf' and add a mapping
-to your local user's login on localhost:
+<li>Edit `/etc/postgresql/<version>/<cluster>/pg_ident.conf' and add
+a mapping to your local user's login on localhost:
 ```
 # MAPNAME           SYSTEM-USERNAME     PG-USERNAME
 sc_push_lib_test    <your local user>   sc_push_lib_test
 '''
 </li>
 
-<li>Reload postgres, for example, `sudo systemctl reload postgresql'.</li>
+<li>Reload postgres, for example, `sudo systemctl reload
+postgresql'.</li>
 
 <li>Try to log in as follows:
 ```
