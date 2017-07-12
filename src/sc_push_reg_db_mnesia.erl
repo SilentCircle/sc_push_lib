@@ -99,8 +99,10 @@
 %% @end
 %%--------------------------------------------------------------------
 -spec db_init(Config) -> {ok, Context} | {error, Reason} when
-      Config :: proplists:proplist(), Context :: ctx(),
+      Config :: map() | proplists:proplist(), Context :: ctx(),
       Reason :: term().
+db_init(Config) when is_map(Config) ->
+    db_init(maps:get(connection, Config));
 db_init(Config) when is_list(Config) ->
     Nodes = sc_util:val(nodes, Config, [node()]),
     Ctx = [],

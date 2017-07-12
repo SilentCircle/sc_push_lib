@@ -105,13 +105,13 @@ sc_push_lib_test=# select current_database(), current_user, current_setting('sea
 
 
 <table width="100%" border="0" summary="list of modules">
-<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/feature/add-postgresql-support/doc/sc_config.md" class="module">sc_config</a></td></tr>
-<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/feature/add-postgresql-support/doc/sc_push_lib.md" class="module">sc_push_lib</a></td></tr>
-<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/feature/add-postgresql-support/doc/sc_push_lib_app.md" class="module">sc_push_lib_app</a></td></tr>
-<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/feature/add-postgresql-support/doc/sc_push_lib_sup.md" class="module">sc_push_lib_sup</a></td></tr>
-<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/feature/add-postgresql-support/doc/sc_push_reg_api.md" class="module">sc_push_reg_api</a></td></tr>
-<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/feature/add-postgresql-support/doc/sc_push_reg_db.md" class="module">sc_push_reg_db</a></td></tr>
-<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/feature/add-postgresql-support/doc/sc_push_reg_db_mnesia.md" class="module">sc_push_reg_db_mnesia</a></td></tr>
-<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/feature/add-postgresql-support/doc/sc_push_reg_db_postgres.md" class="module">sc_push_reg_db_postgres</a></td></tr>
-<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/feature/add-postgresql-support/doc/sc_push_req_mgr.md" class="module">sc_push_req_mgr</a></td></tr></table>
+<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/master/doc/sc_config.md" class="module">sc_config</a></td></tr>
+<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/master/doc/sc_push_lib.md" class="module">sc_push_lib</a></td></tr>
+<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/master/doc/sc_push_lib_app.md" class="module">sc_push_lib_app</a></td></tr>
+<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/master/doc/sc_push_lib_sup.md" class="module">sc_push_lib_sup</a></td></tr>
+<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/master/doc/sc_push_reg_api.md" class="module">sc_push_reg_api</a></td></tr>
+<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/master/doc/sc_push_reg_db.md" class="module">sc_push_reg_db</a></td></tr>
+<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/master/doc/sc_push_reg_db_mnesia.md" class="module">sc_push_reg_db_mnesia</a></td></tr>
+<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/master/doc/sc_push_reg_db_postgres.md" class="module">sc_push_reg_db_postgres</a></td></tr>
+<tr><td><a href="http://github.com/SilentCircle/sc_push_lib/blob/master/doc/sc_push_req_mgr.md" class="module">sc_push_req_mgr</a></td></tr></table>
 

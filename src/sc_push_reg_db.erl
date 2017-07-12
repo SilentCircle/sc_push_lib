@@ -224,7 +224,7 @@
 %% Behavior callbacks
 %%--------------------------------------------------------------------
 -callback db_init(Config) -> {ok, Context} | {error, Reason} when
-      Config :: proplists:proplist(), Context :: ctx(),
+      Config :: map() | proplists:proplist(), Context :: ctx(),
       Reason :: term().
 
 

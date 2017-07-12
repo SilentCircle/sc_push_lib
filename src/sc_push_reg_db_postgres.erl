@@ -53,21 +53,26 @@
 
 -define(ROLE, pool_worker).
 
--ifndef(NO_SCHEMA).
--define(DB_SCHEMA, "scpf").
--define(DB_SCHEMA_PREFIX, ?DB_SCHEMA ".").
--else.
--define(DB_SCHEMA_PREFIX, "").
--endif.
+-define(DEFAULT_DB_SCHEMA, "public").
+-define(DEFAULT_DB_PUSH_TOKENS_TBL, "push_tokens").
 
--define(DB_PUSH_TOKENS_TBL_BASE, "push_tokens").
--define(DB_PUSH_TOKENS_TBL, ?DB_SCHEMA_PREFIX ?DB_PUSH_TOKENS_TBL_BASE).
--define(SPRDB, sc_push_reg_db).
 -define(EPOCH_GREGORIAN_SECONDS, 62167219200). % Jan 1, 1970 00:00:00 GMT
 
+-define(SPRDB, sc_push_reg_db).
 -define(CTX, ?MODULE).
+
+-type pl(KT, VT) :: [{KT, VT}].
+-type config() :: simple_config() | extended_config().
+-type simple_config() :: pl(atom(), string()).
+-type extended_config() :: ext_cfg_connection_only() | ext_cfg_full().
+-type table_config() :: pl(atom(), string()).
+-type ext_cfg_connection_only() :: #{connection => simple_config()}.
+-type ext_cfg_full() :: #{connection => simple_config(),
+                          table_config => table_config()}.
+
+
 -record(?CTX, {conn          :: epgsql:connection(),
-               config        :: proplists:proplist(),
+               config        :: config(),
                prep_qs = #{} :: map() % prepared queries, keyed by query name
               }).
 
@@ -86,7 +91,7 @@
 -type cols() :: [col()].
 -type rows() :: [row()].
 
--type other_error() :: {error, term()}.
+-type other_error() :: {error, term()} | {rollback, term()}.
 -type scpf_error() :: {db_error, db, proplists:proplist()} |
                       {db_error, other, other_error()}.
 -type reg_id_key() :: sc_push_reg_db:reg_id_key().
@@ -106,23 +111,92 @@
 %% Return an opaque context for use with the other API calls.
 %%
 %% <dl>
-%%  <dt>`Config'</dt><dd>A property list containing at least
-%%  the following properties:
-%%  <dl>
-%%    <dt>`hostname :: string()'</dt><dd>Postgres host name</dd>
-%%    <dt>`database :: string()'</dt><dd>Database name</dd>
-%%    <dt>`username :: string()'</dt><dd>User (role) name</dd>
-%%    <dt>`password :: string()'</dt><dd>User/role password</dd>
-%%  </dl>
+%%  <dt>`Config'</dt>
+%%  <dd>This may be provided one of the following formats:
+%%   <ul>
+%%     <li><em>Simple format</em>A property list containing at least
+%%     the following properties (plus any others supported by
+%%     `epgsql', to which the property list is passed directly):
+%%      <dl>
+%%        <dt>`hostname :: string()'</dt><dd>Postgres host name</dd>
+%%        <dt>`database :: string()'</dt><dd>Database name</dd>
+%%        <dt>`username :: string()'</dt><dd>User (role) name</dd>
+%%        <dt>`password :: string()'</dt><dd>User/role password</dd>
+%%      </dl>
+%%     </li>
+%%     <li><em>Extended format</em>A map with the following keys and
+%%     values:
+%%      <dl>
+%%       <dt>`connection :: proplist()' (required)</dt>
+%%         <dd>A property list as defined in the <em>Simple
+%%         format</em></dd>
+%%       <dt>`table_config :: proplist()' (optional)</dt>
+%%         <dd>A property list containing zero or more of the
+%%         following properties:
+%%          <dl>
+%%           <dt>`table_name :: string()'</dt>
+%%            <dd> The name of the push tokens table (default:
+%%            `"push_tokens"')</dd>
+%%           <dt>`table_schema :: string()'</dt>
+%%            <dd>The name of the push tokens table schema (default:
+%%            `"public"')</dd>
+%%          </dl>
+%%         </dd>
+%%      </dl>
+%%     </li>
+%%   </ul>
 %%  </dd>
-%%  <dt>`Context'</dt><dd>An opaque term returned to the caller.</dd>
+%%  <dt>`Context'</dt>
+%%   <dd>An opaque term returned to the caller.</dd>
 %% </dl>
+%%
+%% ### Example 1: Simple format ###
+%%
+%% ```
+%% Config = [
+%%  {hostname, "db.example.com"},
+%%  {database, "mydb"},
+%%  {username, "mydbuser"},
+%%  {password, "mydbpasswd"}
+%% ].
+%% '''
+%%
+%% ### Example 2: Extended format without table info ###
+%%
+%% ```
+%% Config = #{
+%%   connection => [
+%%                  {hostname, "db.example.com"},
+%%                  {database, "mydb"},
+%%                  {username, "mydbuser"},
+%%                  {password, "mydbpasswd"}
+%%                 ]
+%% }.
+%% '''
+%%
+%% ### Example 3: Extended format with table info ###
+%%
+%% ```
+%% Config = #{
+%%   connection => [
+%%                  {hostname, "db.example.com"},
+%%                  {database, "mydb"},
+%%                  {username, "mydbuser"},
+%%                  {password, "mydbpasswd"}
+%%                 ],
+%%   table_config => [
+%%                    {table_name, "push_tokens"},
+%%                    {table_schema, "public"}
+%%                   ]
+%% }.
+%% '''
+%%
 %% @end
 %%--------------------------------------------------------------------
 -spec db_init(Config) -> {ok, Context} | {error, Reason} when
-      Config :: proplists:proplist(), Context :: ctx(),
+      Config :: config(), Context :: ctx(),
       Reason :: term().
-db_init(Config) when is_list(Config) ->
+db_init(Config) ->
     connect(Config).
 
 %%--------------------------------------------------------------------
@@ -353,10 +427,15 @@ reregister_svc_toks(#?CTX{conn=Conn,
 %%--------------------------------------------------------------------
 make_context(Conn, Config) ->
     try
+        TblCfg = table_config(Config),
+        TblSchema = sc_util:req_val(table_schema, TblCfg),
+        TblName = sc_util:req_val(table_name, TblCfg),
+        PushTblName = full_table_name(TblSchema, TblName),
+
         %% Create temp table to ensure there exists a pg_temp schema.
         ok = ensure_temp_schema(Conn),
-        ok = create_local_functions(Conn, ?DB_PUSH_TOKENS_TBL),
-        PTQueries = push_tokens_queries(?DB_PUSH_TOKENS_TBL),
+        ok = create_local_functions(Conn, PushTblName),
+        PTQueries = push_tokens_queries(PushTblName),
         {ok, PrepQs} = prepare_statements(Conn, PTQueries),
         {ok, #?CTX{conn=Conn,
                    config=Config,
@@ -772,7 +851,7 @@ parse(Conn, QueryName, Query) ->
 
 %%--------------------------------------------------------------------
 -spec push_tokens_queries(Tab) -> Queries when
-      Tab :: iolist(), Queries :: [{Name, Query}],
+      Tab :: binary() | iolist(), Queries :: [{Name, Query}],
       Name :: string(), Query :: iolist().
 push_tokens_queries(Tab) ->
     Tbl = sc_util:to_bin(Tab),
@@ -938,10 +1017,10 @@ make_call_upsert_function() ->
      <<"($1::text, $2::text, $3::text, $4::text, $5::text)">>].
 
 %%--------------------------------------------------------------------
--spec schema_prefix() -> binary().
-schema_prefix() ->
-    list_to_binary(?DB_SCHEMA_PREFIX).
-
+full_table_name("", TableName) ->
+    sc_util:to_bin(TableName);
+full_table_name(Schema, TableName) ->
+    list_to_binary([sc_util:to_bin(Schema), $., sc_util:to_bin(TableName)]).
 
 %%--------------------------------------------------------------------
 check_error({error, _}=E) ->
@@ -985,19 +1064,76 @@ pg_errstr(#error{}=E) ->
                     [E#error.severity, E#error.codename, E#error.code,
                      E#error.message])).
 
+%%--------------------------------------------------------------------
 connect(Config) ->
     Pid = self(),
     lager:info("[~p:~p] Initializing", [?ROLE, Pid]),
-    case epgsql:connect(Config) of
+    ParsedConfig = parse_config(Config),
+    ConnInfo = connection(ParsedConfig),
+    case epgsql:connect(ConnInfo) of
         {ok, Conn} ->
-            DB = proplists:get_value(database, Config, ""),
+            DB = proplists:get_value(database, ConnInfo, ""),
             lager:info("[~p:~p] Connected to database ~s", [?ROLE, Pid, DB]),
-            make_context(Conn, Config);
+            make_context(Conn, ParsedConfig);
         Error ->
             lager:warning("[~p:~p] connect error: ~p", [?ROLE, Pid, Error]),
             connect_error(Error)
     end.
 
+%%--------------------------------------------------------------------
+-spec parse_config(Config) -> ParsedConfig when
+      Config :: config(), ParsedConfig :: ext_cfg_full().
+parse_config(Config) when is_list(Config) ->
+    parse_config(#{connection => Config});
+parse_config(#{}=Map) ->
+    ConnCfg = maps:get(connection, Map),
+    TblCfg = maps:get(table_config, Map, []),
+    DefTblCfg = default_table_config(),
+    TblConfig = parse_table_config(merge_proplists(TblCfg, DefTblCfg)),
+    #{connection => ConnCfg,
+      table_config => TblConfig}.
+
+%%--------------------------------------------------------------------
+default_table_config() ->
+    [
+     {table_name, ?DEFAULT_DB_PUSH_TOKENS_TBL},
+     {table_schema, ?DEFAULT_DB_SCHEMA}
+    ].
+
+%%--------------------------------------------------------------------
+merge_proplists(Override, Def) ->
+    lists:ukeymerge(1, lists:ukeysort(1, Override), lists:ukeysort(1, Def)).
+
+%%--------------------------------------------------------------------
+parse_table_config([{table_name, _}=KV|Rest]) ->
+    [KV] ++ parse_table_config(Rest);
+parse_table_config([{table_schema, _}=KV|Rest]) ->
+    [KV] ++ parse_table_config(Rest);
+parse_table_config([]) ->
+    [];
+parse_table_config(X) ->
+    erlang:error({unrecognized_table_config, X}).
+
+%%--------------------------------------------------------------------
+connection(#{}=Map) ->
+    mreq_val(connection, Map).
+
+%%--------------------------------------------------------------------
+table_config(#{}=Map) ->
+    mreq_val(table_config, Map).
+
+%%--------------------------------------------------------------------
+mreq_val(Key, #{} = Map) ->
+    case maps:find(Key, Map) of
+        {ok, Val} ->
+            Val;
+        error ->
+            erlang:error({missing_map_key, Key})
+    end.
+
+-compile({inline, [{mreq_val, 2}, {connection, 1}, {table_config, 1}]}).
+
+%%--------------------------------------------------------------------
 connect_error(#error{}=E) ->
     translate_error({error, E});
 connect_error({unsupported_auth_method, _}=Reason) ->

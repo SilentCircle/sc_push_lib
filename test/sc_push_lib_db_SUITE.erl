@@ -647,8 +647,11 @@ db_destroy(DB, DBInfo, Config) ->
 
 %%--------------------------------------------------------------------
 clear_external_db(postgres, _DBInfo, Config) ->
-    ConnParams = db_config(postgres, Config),
-    Tables = ["scpf.push_tokens"],
+    ConnParams = db_conn_params(postgres, Config),
+    TblCfg = db_table_config(postgres, Config),
+    Schema = value(table_schema, TblCfg),
+    Name = value(table_name, TblCfg),
+    Tables = [Schema ++ "." ++ Name],
     {ok, Conn} = epgsql:connect(ConnParams),
     lists:foreach(fun(Table) ->
                           {ok, _} = epgsql:squery(Conn, "delete from " ++ Table)
@@ -672,4 +675,31 @@ db_pools(#{db := DB, mod := DBMod}, Config) ->
 %%--------------------------------------------------------------------
 db_config(DB, Config) ->
     maps:get(DB, value(connect_info, Config), []).
+
+%%--------------------------------------------------------------------
+db_conn_params(DB, Config) ->
+    case db_config(DB, Config) of
+        #{} = Map ->
+            maps:get(connection, Map);
+        Other ->
+            Other
+    end.
+
+%%--------------------------------------------------------------------
+db_table_config(DB, Config) ->
+    case maps:get(DB, value(connect_info, Config), []) of
+        #{} = Map ->
+            maps:get(table_config, Map, default_table_config());
+        [] ->
+            default_table_config();
+        Other ->
+            Other
+    end.
+
+%%--------------------------------------------------------------------
+default_table_config() ->
+    [
+     {table_schema, "scpf"},
+     {table_name, "push_tokens"}
+    ].
 
