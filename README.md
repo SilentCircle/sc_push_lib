@@ -124,7 +124,7 @@ obvious where things are found, though.
       [ % workerargs
        {db_mod, sc_push_reg_db_postgres},
        {db_config, #{connection => [
-                                    {hostname, "localhost"},
+                                    {host, "localhost"},
                                     {database, "sc_push_lib_test"},
                                     {username, "sc_push_lib_test"},
                                     {password, "test"}
@@ -150,7 +150,7 @@ username and password be used as configured in `test/test.config`:
 ```
 {connect_info,
  #{postgres => #{connection => [
-                                {hostname, "localhost"},
+                                {host, "localhost"},
                                 {database, "sc_push_lib_test"},
                                 {username, "sc_push_lib_test"},
                                 {password, "test"}

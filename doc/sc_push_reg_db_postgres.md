@@ -236,7 +236,7 @@ Return an opaque context for use with the other API calls.
 least the following properties (plus any others supported by
 <code>epgsql</code>, to which the property list is passed directly):
 <dl>
-<dt><code>hostname :: string()</code></dt><dd>Postgres host name</dd>
+<dt><code>host :: string()</code></dt><dd>Postgres host name</dd>
 <dt><code>database :: string()</code></dt><dd>Database name</dd>
 <dt><code>username :: string()</code></dt><dd>User (role) name</dd>
 <dt><code>password :: string()</code></dt><dd>User/role password</dd>
@@ -281,7 +281,7 @@ following properties:
 
 ```
   Config = [
-   {hostname, "db.example.com"},
+   {host, "db.example.com"},
    {database, "mydb"},
    {username, "mydbuser"},
    {password, "mydbpasswd"}
@@ -293,7 +293,7 @@ following properties:
 ```
   Config = #{
     connection => [
-                   {hostname, "db.example.com"},
+                   {host, "db.example.com"},
                    {database, "mydb"},
                    {username, "mydbuser"},
                    {password, "mydbpasswd"}
@@ -306,7 +306,7 @@ following properties:
 ```
   Config = #{
     connection => [
-                   {hostname, "db.example.com"},
+                   {host, "db.example.com"},
                    {database, "mydb"},
                    {username, "mydbuser"},
                    {password, "mydbpasswd"}

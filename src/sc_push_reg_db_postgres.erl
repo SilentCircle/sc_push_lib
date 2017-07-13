@@ -120,7 +120,7 @@
 %%     least the following properties (plus any others supported by
 %%     `epgsql', to which the property list is passed directly):
 %%      <dl>
-%%        <dt>`hostname :: string()'</dt><dd>Postgres host name</dd>
+%%        <dt>`host :: string()'</dt><dd>Postgres host name</dd>
 %%        <dt>`database :: string()'</dt><dd>Database name</dd>
 %%        <dt>`username :: string()'</dt><dd>User (role) name</dd>
 %%        <dt>`password :: string()'</dt><dd>User/role password</dd>
@@ -156,7 +156,7 @@
 %%
 %% ```
 %% Config = [
-%%  {hostname, "db.example.com"},
+%%  {host, "db.example.com"},
 %%  {database, "mydb"},
 %%  {username, "mydbuser"},
 %%  {password, "mydbpasswd"}
@@ -168,7 +168,7 @@
 %% ```
 %% Config = #{
 %%   connection => [
-%%                  {hostname, "db.example.com"},
+%%                  {host, "db.example.com"},
 %%                  {database, "mydb"},
 %%                  {username, "mydbuser"},
 %%                  {password, "mydbpasswd"}
@@ -181,7 +181,7 @@
 %% ```
 %% Config = #{
 %%   connection => [
-%%                  {hostname, "db.example.com"},
+%%                  {host, "db.example.com"},
 %%                  {database, "mydb"},
 %%                  {username, "mydbuser"},
 %%                  {password, "mydbpasswd"}
